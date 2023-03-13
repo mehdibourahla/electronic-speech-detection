@@ -10,8 +10,8 @@ def get_model(input_shape):
     x = layers.LSTM(64, return_sequences=True)(inputs)
     x = layers.LSTM(64)(x)
     # Add a classifier
-    outputs = layers.Dense(1, activation="sigmoid")(x)
+    outputs = layers.Dense(2, activation="softmax")(x)
     model = keras.Model(inputs, outputs)
-    model.compile("adam", "binary_crossentropy", metrics=["accuracy"])
+    model.compile("adam", "categorical_crossentropy", metrics=["accuracy"])
 
     return model
