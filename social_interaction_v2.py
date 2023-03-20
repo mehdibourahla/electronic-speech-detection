@@ -8,6 +8,7 @@ import tensorflow_hub as hub
 import pandas as pd
 import librosa
 import numpy as np
+import matplotlib.pyplot as plt
 import os
 import pandas as pd
 
@@ -115,3 +116,53 @@ model2_evaluation = {
     "recall": np.mean([score["1.0"]["recall"] for score in model2_scores]),
     "f1-score": np.mean([score["1.0"]["f1-score"] for score in model2_scores]),
 }
+
+### Visualize results
+
+# Plot bar chart of mean and standard deviation of precision, recall, and F1 score
+labels = ["Accuracy", "Precision", "F1 Score", "Recall"]
+x = np.arange(len(labels))
+width = 0.3
+
+fig, ax = plt.subplots()
+rects1 = ax.bar(
+    x - width / 2,
+    [
+        model1_evaluation["accuracy"],
+        model1_evaluation["precision"],
+        model1_evaluation["f1-score"],
+        model1_evaluation["recall"],
+    ],
+    width,
+    label="YAMNet + LSTM",
+)
+rects2 = ax.bar(
+    x + width / 2,
+    [
+        model2_evaluation["accuracy"],
+        model2_evaluation["precision"],
+        model2_evaluation["f1-score"],
+        model2_evaluation["recall"],
+    ],
+    width,
+    label="YAMNet/TV + LSTM",
+)
+
+
+ax.set_ylabel("Score")
+ax.set_xticks(x)
+ax.set_xticklabels(labels)
+ax.legend()
+# Add values as text annotations to the bars
+for rect in rects1 + rects2:
+    height = rect.get_height()
+    ax.text(
+        rect.get_x() + rect.get_width() / 2.0,
+        height - height / 2,
+        "{:.2f}".format(height),
+        ha="center",
+        va="bottom",
+        color="white",
+    )
+
+plt.show()

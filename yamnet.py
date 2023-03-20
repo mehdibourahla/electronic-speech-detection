@@ -22,7 +22,14 @@ def load_yamnet_features(dataset):
         features = []
 
         for file in data:
-            audio_wav, _ = librosa.load(file, sr=16000)
+            desired_duration = 30
+            audio_wav, sr = librosa.load(file, sr=16000)
+            if sr != 16000:
+                audio_wav = librosa.resample(audio_wav, sr, 16000)
+            audio_wav = librosa.util.fix_length(
+                audio_wav, size=16000 * desired_duration
+            )
+
             _, embeddings, _ = yamnet_model(audio_wav)
 
             label = file.name.split("-")[0]

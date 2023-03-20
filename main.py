@@ -7,23 +7,29 @@ from models.lstm_model import get_model
 from yamnet import load_yamnet_features
 from void import load_void_features
 from yamnet_pretrained import load_yamnet_inference
+from keras.utils import to_categorical
 
 ### YAMNET + LSTM
 X, y = load_yamnet_features("cts_recording")
 
+X = np.mean(X.reshape((540, 31, 2, 1024)), axis=2)
+y = to_categorical(y)
+
 yamnet_scores = []
 for fold in get_cts_folds():
     X_train = np.delete(X, fold, axis=0)
-    y_train = np.delete(y, fold)
+    y_train = np.delete(y, fold, axis=0)
 
     # Get the validation data
     X_val = X[fold]
-    y_val = y[fold]
+    y_val = y[fold][:, 0]
 
     model = get_model(X[0].shape)
     model.fit(X_train, y_train, epochs=10, batch_size=32, verbose=1)
+
     y_pred = model.predict(X_val)
-    y_pred = (y_pred > 0.5).astype(int)
+    y_pred = [(tmp[0] > 0.5).astype(int) for tmp in y_pred]
+
     report = classification_report(y_val, y_pred, output_dict=True)
     yamnet_scores.append(report)
 
@@ -35,7 +41,7 @@ yamnet_recall = np.mean([score["1.0"]["recall"] for score in yamnet_scores])
 ### Export YAMNET + LSTM
 model = get_model(X[0].shape)
 model.fit(X, y, epochs=10, batch_size=32, verbose=1)
-export_model(model, 'YAMNet_LSTM')
+export_model(model, "YAMNet_LSTM")
 
 ### VOID + SVM
 void_scores = []
@@ -93,7 +99,7 @@ rects2 = ax.bar(
 )
 
 rects3 = ax.bar(
-    x + 3*width/2,
+    x + 3 * width / 2,
     [
         report["accuracy"],
         report["1"]["precision"],
