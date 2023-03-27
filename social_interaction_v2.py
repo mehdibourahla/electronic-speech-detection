@@ -4,6 +4,7 @@ from models.lstm_model import get_model
 from draft import get_draft_model
 from sklearn.metrics import classification_report
 from keras.utils import to_categorical
+from keras.utils.vis_utils import plot_model
 import tensorflow_hub as hub
 import pandas as pd
 import librosa
@@ -97,6 +98,7 @@ for fold in get_cts_folds():
     tv_scores.append(report_tv)
     model1_scores.append(report_interaction_v1)
     model2_scores.append(report_interaction_v2)
+    break
 
 tv_evaluation = {
     "accuracy": np.mean([score["accuracy"] for score in tv_scores]),
