@@ -11,6 +11,12 @@ def get_audio_path(source):
     data_path = Path(config[source])
     return list(data_path.glob("*.wav"))
 
+def get_features_path(source):
+    with open("config.json") as f:
+        config = json.load(f)
+    data_path = Path(config[source])
+    return list(data_path.glob("*.npy"))
+
 
 def get_data(data):
     X, y = np.split(data, indices_or_sections=(97,), axis=1)
