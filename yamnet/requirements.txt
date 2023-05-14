@@ -1,0 +1,7 @@
+pandas
+matplotlib
+tensorflow
+tensorflow_hub
+librosa
+seaborn
+numpy
