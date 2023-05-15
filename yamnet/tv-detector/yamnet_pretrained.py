@@ -5,7 +5,6 @@ import argparse
 import os
 import librosa
 import logging
-import numpy as np
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
@@ -41,12 +40,8 @@ def get_ear_data(path):
     # Get the ear data
     ear_data = pd.read_csv(path)
 
-    ear_data = ear_data[
-        ["ID", "SoundFile", "FileName", "Tv", "SocEnt", "Talk", "Phone"]
-    ]
+    ear_data = ear_data[["ID", "SoundFile", "FileName", "Tv"]]
     ear_data["Tv"] = ear_data["Tv"].astype(int)
-    ear_data["SocEnt"] = ear_data["SocEnt"].astype(int)
-    ear_data["Phone"] = ear_data["Phone"].astype(int)
 
     # Log the number of records before filtering
     logging.info(f"Number of records before filtering: {len(ear_data)}")
@@ -90,6 +85,7 @@ def process_audio(path, ground_truth, yamnet_model):
 
     yamnet_scores = yamnet_tv(audio_wav, yamnet_model)
     record["yamnet_tv"] = yamnet_scores["tv"]
+    record["yamnet_radio"] = yamnet_scores["radio"]
 
     return record
 

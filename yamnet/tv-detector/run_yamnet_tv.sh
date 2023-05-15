@@ -24,4 +24,4 @@ conda activate base_env
 pip install -r requirements.txt
 
 # Run the Python script
-python yamnet_pretrained.py --audio_dir /projects/mcshin_research/ear-data/Aging/FixAllWavFiles --gt_dir /projects/mcshin_research/ear-data/Data_Materials/Aging_Raw_Data/Fixed_Aging_EAR_RawData.csv --output_dir /scratch/mbourahl/socialbit/ear_aging_yamnet_tv
+python yamnet_pretrained.py --audio_dir /projects/mcshin_research/ear-data/DSE/FixAllWavFiles --gt_dir /projects/mcshin_research/ear-data/Data_Materials/DSE_Raw_Data/Fixed_DSE_EAR_RawData.csv --output_dir /scratch/mbourahl/socialbit/ear_dse_yamnet_tv
