@@ -1,11 +1,8 @@
 import tensorflow_hub as hub
-import tensorflow as tf
 from pathlib import Path
 import argparse
-import os
 import librosa
 import logging
-import pandas as pd
 import numpy as np
 
 # Configure logging

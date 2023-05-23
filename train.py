@@ -1,4 +1,4 @@
-from utility import get_features_path
+from utility import get_features_path, export_model
 import numpy as np
 import os
 from tensorflow.keras.utils import to_categorical
@@ -79,31 +79,23 @@ my_recording_X, my_recording_y = preprocess_data(my_recording_X, my_recording_y)
 kelly_X, kelly_y = preprocess_data(kelly_X, kelly_y)
 cts_X, cts_y = preprocess_data(cts_X, cts_y)
 
-# Datasets
-datasets = {
-    'my_recording': (my_recording_X, my_recording_y),
-    'common_voice': (common_voice_X, common_voice_y),
-    'kelly': (kelly_X, kelly_y),
-    'cts': (cts_X, cts_y)
-}
+# Data concatenation
+X = np.concatenate([my_recording_X, common_voice_X, kelly_X, cts_X], axis=0)
+y = np.concatenate([my_recording_y, common_voice_y, kelly_y, cts_y], axis=0)
 
 # Parameters
+num_folds = 4
 input_shape = (31, 1024)
 batch_size = 32
 epochs = 10
 
 classification_reports = []
 # K-fold cross-validation
-for test_set in datasets.keys():
-    print(f"Testing on {test_set} dataset")
-    train_sets = [key for key in datasets.keys() if key != test_set]
-
-    # Data concatenation
-    X_train = np.concatenate([datasets[train][0] for train in train_sets], axis=0)
-    y_train = np.concatenate([datasets[train][1] for train in train_sets], axis=0)
-
-    X_test = datasets[test_set][0]
-    y_test = datasets[test_set][1]
+kfold = KFold(n_splits=num_folds, shuffle=True)
+fold = 1
+for train_idx, test_idx in kfold.split(X, y):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
 
     # Create and train the model
     model = get_model(input_shape)
@@ -114,36 +106,29 @@ for test_set in datasets.keys():
 
     # Calculate the classification report for the current fold
     report = classification_report(y_test, y_pred, output_dict=True)
-    report['test_set'] = test_set
     # Save the classification report to an array
     classification_reports.append(report)
 
-# Extract the positive class performance metrics
-positive_class_data = [{'test_set': d['test_set'], 'precision': d['1']['precision'], 'recall': d['1']['recall'], 'f1-score': d['1']['f1-score']} for d in classification_reports if d['test_set'] != 'common_voice']
+datasets = ['Fold 1', 'Fold 2', 'Fold 3', 'Fold 4']
+precision = [d['1']['precision'] for d in classification_reports]
+recall = [d['1']['recall'] for d in classification_reports]
+f1_score = [d['1']['f1-score'] for d in classification_reports]
 
-# Prepare the labels and values for the bar chart
-labels = [d['test_set'] for d in positive_class_data]
-precision_values = [d['precision'] for d in positive_class_data]
-recall_values = [d['recall'] for d in positive_class_data]
-f1_score_values = [d['f1-score'] for d in positive_class_data]
+x = np.arange(len(datasets))
+width = 0.2
 
-# Set the bar chart parameters
-bar_width = 0.25
-x_positions = list(range(len(labels)))
-
-# Create the bar chart
 fig, ax = plt.subplots()
-rects1 = ax.bar(x_positions, precision_values, bar_width, label='Precision')
-rects2 = ax.bar([p + bar_width for p in x_positions], recall_values, bar_width, label='Recall')
-rects3 = ax.bar([p + 2 * bar_width for p in x_positions], f1_score_values, bar_width, label='F1-score')
+rects1 = ax.bar(x - width, precision, width, label='Precision')
+rects2 = ax.bar(x, recall, width, label='Recall')
+rects3 = ax.bar(x + width, f1_score, width, label='F1-score')
 
-# Set labels, title, and legend
-ax.set_xlabel('Test Set')
 ax.set_ylabel('Scores')
-ax.set_title('Positive Class Performance Metrics')
-ax.set_xticks([p + bar_width for p in x_positions])
-ax.set_xticklabels(labels)
+ax.set_title('Scores for Positive Class (1) across Datasets')
+ax.set_xticks(x)
+ax.set_xticklabels(datasets)
 ax.legend()
+
+fig.tight_layout()
 
 # Add values as text annotations to the bars
 for rect in rects1 + rects2 + rects3:
@@ -159,3 +144,8 @@ for rect in rects1 + rects2 + rects3:
 
 # Show the bar chart
 plt.show()
+
+### Export Model
+model = get_model(X[0].shape)
+model.fit(X, y, epochs=10, batch_size=32, verbose=1)
+export_model(model, "YAMNet_LSTM_v2")
