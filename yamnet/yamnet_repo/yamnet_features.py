@@ -6,6 +6,7 @@ import yamnet as yamnet_model
 import params as yamnet_params
 import soundfile as sf
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import resampy
 
 
 # Configure logging
@@ -24,7 +25,7 @@ def yamnet_embeddings(waveform, yamnet):
     return embeddings_final
 
 
-def process_audio(path, output_dir, yamnet):
+def process_audio(path, output_dir, yamnet, params):
     logging.info(f"Processing audio: {path}")
     try:
         wav_data, sr = sf.read(path, dtype=np.int16)
@@ -35,6 +36,12 @@ def process_audio(path, output_dir, yamnet):
     assert wav_data.dtype == np.int16, "Bad sample type: %r" % wav_data.dtype
     waveform = wav_data / 32768.0  # Convert to [-1.0, +1.0]
     waveform = waveform.astype("float32")
+
+    # Convert to mono and the sample rate expected by YAMNet.
+    if len(waveform.shape) > 1:
+        waveform = np.mean(waveform, axis=1)
+    if sr != params.sample_rate:
+        waveform = resampy.resample(waveform, sr, params.sample_rate)
 
     duration = 30  # Duration in seconds
     sample_count = int(
@@ -54,12 +61,12 @@ def process_audio(path, output_dir, yamnet):
         return None
 
 
-def process_audio_wrapper(audio_dir, output_dir, yamnet):
+def process_audio_wrapper(audio_dir, output_dir, yamnet, params):
     data_path = Path(audio_dir)
     data = list(data_path.glob("*.wav"))
     with ThreadPoolExecutor() as executor:
         futures = {
-            executor.submit(process_audio, str(file), output_dir, yamnet)
+            executor.submit(process_audio, str(file), output_dir, yamnet, params)
             for file in data
         }
         for future in as_completed(futures):
@@ -79,7 +86,7 @@ def main(args):
     yamnet = yamnet_model.yamnet_frames_model(params)
     yamnet.load_weights("yamnet.h5")
 
-    process_audio_wrapper(audio_dir, output_dir, yamnet)
+    process_audio_wrapper(audio_dir, output_dir, yamnet, params)
 
     logging.info("Finished processing.")
 
