@@ -2,32 +2,27 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras import layers, optimizers, Input, Model
-from transformer import TransformerClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
-import os
-import argparse
 import logging
 import json
 
-os.environ["TFHUB_CACHE_DIR"] = "/users/mbourahl/.cache"
 
-
-# Configure logging
-logging.basicConfig(
-    filename="model.log",
-    filemode="w",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
-physical_devices = tf.config.list_physical_devices("GPU")
-if len(physical_devices) > 0:
-    logging.info(f"Found {len(physical_devices)} GPUs: {physical_devices}")
-else:
-    logging.warning("No GPUs found")
+def initialize_args(parser):
+    # Input paths
+    parser.add_argument("--dataset", required=True, help="Name of the data used")
+    parser.add_argument(
+        "--data_dir",
+        required=True,
+        help="Path to the directory containing NPY files",
+    )
+    parser.add_argument(
+        "--gt_dir", required=True, help="Path to the ground truth CSV file"
+    )
+    parser.add_argument(
+        "--output_dir", required=True, help="Path to Output the results"
+    )
 
 
 def load_ground_truth(gt_dir):
@@ -76,7 +71,7 @@ def load_and_pad_data(data_dir, balanced_data):
     for record in balanced_data.iterrows():
         try:
             sequence = np.load(f"{data_dir}/{record[0]}.npy", allow_pickle=True)
-            y.append(record[1]["TV"])
+            y.append(record[1]["tv"])
             data.append(sequence)
         except Exception as e:
             logging.error(f"Error loading file {record[0]}.npy: {str(e)}")
@@ -87,81 +82,32 @@ def load_and_pad_data(data_dir, balanced_data):
     return padded_data, y
 
 
-def split_data(data, labels, train_size=0.7, validation_size=0.15):
-    # Calculate the test size
-    test_size = 1 - train_size
-
-    # Split the data into training and testing sets
-    X_train, X_temp, y_train, y_temp = train_test_split(
-        data, labels, train_size=train_size, test_size=test_size, random_state=42
+def split_data(balanced_data):
+    # first split to train and temp
+    balanced_data_train, balanced_data_temp = train_test_split(
+        balanced_data, test_size=0.3, random_state=42
     )
 
-    # Calculate the ratio of validation data to the temporary data
-    validation_ratio = validation_size / test_size
-
-    # Split the temporary data into validation and test sets
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_temp,
-        y_temp,
-        train_size=validation_ratio,
-        test_size=1 - validation_ratio,
-        random_state=42,
+    # second split to validation and test
+    balanced_data_val, balanced_data_test = train_test_split(
+        balanced_data_temp, test_size=0.5, random_state=42
     )
 
-    return X_train, y_train, X_val, y_val, X_test, y_test
+    return balanced_data_train, balanced_data_val, balanced_data_test
 
 
-# LSTM Model
-def lstm_model(input_shape):
-    logging.info(f"Creating model with input shape {input_shape}")
-    adam = optimizers.Adam(3e-4)
-    inputs = Input(shape=input_shape)
-    x = layers.LSTM(64, return_sequences=True)(inputs)
-    x = layers.LSTM(64)(x)
-    outputs = layers.Dense(2, activation="softmax")(x)
-    model = Model(inputs, outputs)
-    model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
-
-    return model
-
-
-# CNN Model
-def cnn_model(input_shape):
-    logging.info(f"Creating model with input shape {input_shape}")
-    adam = optimizers.Adam(3e-4)
-    inputs = Input(shape=input_shape)
-    x = layers.Conv1D(128, kernel_size=3, activation="relu")(inputs)
-    x = layers.GlobalAveragePooling1D()(x)
-    outputs = layers.Dense(2, activation="softmax")(x)
-    model = Model(inputs, outputs)
-    model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
-
-    return model
-
-
-def transformer_model(input_dim):
-    # Define model parameters
-    num_layers = 2
-    embed_dim = input_dim[1]  # 1024
-    num_heads = 2
-    ff_dim = 512
-    num_classes = 2
-    input_shape = (None, embed_dim)
-
-    # Initialize and compile model
-    model = TransformerClassifier(
-        num_layers, embed_dim, num_heads, ff_dim, input_shape, num_classes
-    )
-    model.compile(
-        optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"]
-    )
-    return model
-
-
-def evaluate_model(model, X_test, y_test):
+def evaluate_model(model, test_generator):
     logging.info("Evaluating model")
-    # Predict on validation set
-    y_pred = model.predict(X_test)
+    y_pred = []
+    y_test = []
+    for i in range(len(test_generator)):
+        x, y = test_generator[i]
+        y_pred.extend(model.predict(x))
+        y_test.extend(y)
+
+    # Convert lists to arrays
+    y_pred = np.array(y_pred)
+    y_test = np.array(y_test)
 
     # Convert predictions from one-hot to labels
     y_pred = np.argmax(y_pred, axis=1)
@@ -173,28 +119,59 @@ def evaluate_model(model, X_test, y_test):
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
 
-    return accuracy, precision, recall, f1
+    results = {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+
+    return results
 
 
-def initialize_args(parser):
-    # Input paths
-    parser.add_argument(
-        "--data_dir",
-        required=True,
-        help="Path to the directory containing NPY files",
-    )
-    parser.add_argument(
-        "--gt_dir", required=True, help="Path to the ground truth CSV file"
-    )
-    parser.add_argument(
-        "--output_dir", required=True, help="Path to Output the results"
-    )
+def train_model(
+    model_func,
+    training_generator,
+    validation_generator,
+    epochs=10,
+):
+    # Get a batch of data
+    data_batch, _ = training_generator.__getitem__(0)
+
+    # Get the shape of a single sample
+    input_shape = data_batch[0].shape
+    model = model_func(input_shape)
+
+    model.fit(training_generator, validation_data=validation_generator, epochs=epochs)
+
+    return model
 
 
-def export_model(model, name, dir):
+def save_training_results(results, args):
+    with open(
+        f"{args.output_dir}/ear_{args.dataset}_{args.model_name}_results.json", "w"
+    ) as json_file:
+        json.dump(results, json_file)
+
+
+def export_model(
+    model_func,
+    data_generator,
+    args,
+    epochs=10,
+):
     logging.info("Exporting model...")
 
-    path = f"{dir}/{name}.tflite"
+    # Train on all data and save the model
+    # Get a batch of data
+    data_batch, _ = data_generator.__getitem__(0)
+
+    # Get the shape of a single sample
+    input_shape = data_batch[0].shape
+    model = model_func(input_shape)
+    model.fit(data_generator, epochs=epochs)
+
+    path = f"{args.output_dir}/{args.dataset}_{args.model_name}.tflite"
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
 
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -208,112 +185,3 @@ def export_model(model, name, dir):
 
     with tf.io.gfile.GFile(path, "wb") as f:
         f.write(tflite_model)
-
-
-def train_evaluate_save_model(
-    model_func,
-    model_name,
-    input_shape,
-    X_train,
-    y_train,
-    X_val,
-    y_val,
-    X_test,
-    y_test,
-    data,
-    labels,
-    output_dir,
-    epochs=10,
-    batch_size=32,
-):
-    # Train and evaluate
-    model = model_func(input_shape)
-    model.fit(
-        X_train,
-        y_train,
-        epochs=epochs,
-        batch_size=batch_size,
-        validation_data=(X_val, y_val),
-    )
-    accuracy, precision, recall, f1 = evaluate_model(model, X_test, y_test)
-
-    # Save results to a JSON file
-    results = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }
-    with open(f"{output_dir}/ear_aging_{model_name}_results.json", "w") as json_file:
-        json.dump(results, json_file)
-
-    # Train on all data and save the model
-    model = model_func(input_shape)
-    model.fit(data, labels, epochs=epochs, batch_size=batch_size)
-    export_model(model, f"ear_aging_{model_name}", output_dir)
-
-
-def main(args):
-    logging.info("Starting the main function...")
-
-    balanced_data = load_ground_truth(args.gt_dir)
-    data, labels = load_and_pad_data(args.data_dir, balanced_data)
-
-    # Reshaping YAMNet features to 31 frames
-    data = np.mean(data.reshape((-1, 31, 2, 1024)), axis=2)
-
-    # Splitting data into train, validation and test sets
-    X_train, y_train, X_val, y_val, X_test, y_test = split_data(data, labels)
-
-    input_shape = (X_train.shape[1], X_train.shape[2])
-
-    train_evaluate_save_model(
-        lstm_model,
-        "lstm",
-        input_shape,
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        X_test,
-        y_test,
-        data,
-        labels,
-        args.output_dir,
-    )
-    train_evaluate_save_model(
-        cnn_model,
-        "cnn",
-        input_shape,
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        X_test,
-        y_test,
-        data,
-        labels,
-        args.output_dir,
-    )
-    train_evaluate_save_model(
-        transformer_model,
-        "transformer",
-        input_shape,
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        X_test,
-        y_test,
-        data,
-        labels,
-        args.output_dir,
-    )
-
-    logging.info("Finished processing.")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    initialize_args(parser)
-    main(parser.parse_args())
