@@ -6,12 +6,12 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 class DataGenerator(tf.keras.utils.Sequence):
     def __init__(
-        self, data_dir, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True
+        self, data_dirs, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True
     ):
         "Initialization"
         self.dim = dim
         self.batch_size = batch_size
-        self.data_dir = data_dir
+        self.data_dirs = data_dirs
         self.list_IDs = balanced_data.index.tolist()
         self.labels = balanced_data.tv.values
         self.shuffle = shuffle
@@ -53,7 +53,9 @@ class DataGenerator(tf.keras.utils.Sequence):
         for ID in list_IDs_temp:
             # Load sample and append to list
             try:
-                sequence = np.load(f"{self.data_dir}/{ID}.npy", allow_pickle=True)
+                # Get the correct directory for the ID
+                dir_path = self.data_dirs[ID]
+                sequence = np.load(f"{dir_path}/{ID}.npy", allow_pickle=True)
                 X.append(sequence)
 
                 # Store class

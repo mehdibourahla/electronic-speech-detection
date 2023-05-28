@@ -13,16 +13,76 @@ def initialize_args(parser):
     # Input paths
     parser.add_argument("--dataset", required=True, help="Name of the data used")
     parser.add_argument(
-        "--data_dir",
+        "--data_dir_1",
         required=True,
-        help="Path to the directory containing NPY files",
+        help="Path to the directory containing NPY files 1",
     )
     parser.add_argument(
-        "--gt_dir", required=True, help="Path to the ground truth CSV file"
+        "--data_dir_2",
+        required=True,
+        help="Path to the directory containing NPY files 2",
+    )
+    parser.add_argument(
+        "--gt_dir_1", required=True, help="Path to the ground truth CSV file 1"
+    )
+    parser.add_argument(
+        "--gt_dir_2", required=True, help="Path to the ground truth CSV file 2"
     )
     parser.add_argument(
         "--output_dir", required=True, help="Path to Output the results"
     )
+
+
+def load_balanced_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
+    # Load data
+    data_1 = pd.read_csv(gt_dir_1)
+    data_2 = pd.read_csv(gt_dir_2)
+
+    # Convert all column names to lowercase
+    data_1.columns = map(str.lower, data_1.columns)
+    data_2.columns = map(str.lower, data_2.columns)
+
+    # Process both datasets
+    data_list = [data_1, data_2]
+    for data in data_list:
+        data["tv"] = data["tv"].replace(r"^\s*$", "0", regex=True)
+        data["tv"] = data["tv"].fillna("0")
+        data["tv"] = data["tv"].astype(int)
+        data = data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
+        data = data.drop_duplicates(subset="filename", keep="first")
+
+    # Now data_1 and data_2 are cleaned, so we balance them
+    # Firstly, balance between datasets
+    larger_dataset = data_1 if len(data_1) > len(data_2) else data_2
+    smaller_dataset = data_2 if larger_dataset is data_1 else data_1
+    larger_dataset = larger_dataset.sample(len(smaller_dataset), random_state=42)
+
+    # Secondly, balance within each dataset
+    balanced_data_list = []
+    dir_mapping = {}
+    for idx, data in enumerate([larger_dataset, smaller_dataset]):
+        tv_0 = data[data["tv"] == 0][["filename", "tv"]]
+        tv_1 = data[data["tv"] == 1][["filename", "tv"]]
+        larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
+        smaller_group = tv_1 if larger_group is tv_0 else tv_0
+        larger_group = larger_group.sample(len(smaller_group), random_state=42)
+        balanced_data = pd.concat([larger_group, smaller_group])
+        balanced_data.set_index("filename", inplace=True)
+        balanced_data_list.append(balanced_data)
+
+        # Create directory mapping
+        dir_mapping.update(
+            {
+                filename: data_dir_1 if idx == 0 else data_dir_2
+                for filename in balanced_data.index
+            }
+        )
+
+    # Combine the balanced datasets
+    final_balanced_data = pd.concat(balanced_data_list)
+    logging.info(f"Total data: {len(final_balanced_data)}")
+
+    return final_balanced_data, dir_mapping
 
 
 def load_ground_truth(gt_dir):

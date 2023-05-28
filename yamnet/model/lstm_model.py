@@ -6,7 +6,7 @@ import os
 from data_generator import DataGenerator
 from model import (
     initialize_args,
-    load_ground_truth,
+    load_balanced_data,
     train_model,
     save_training_results,
     export_model,
@@ -48,18 +48,20 @@ def lstm_model(input_shape):
 def main(args):
     logging.info("Starting the LSTM model...")
     args.model_name = "lstm"
-    balanced_data = load_ground_truth(args.gt_dir)
+    balanced_data, dir_mapping = load_balanced_data(
+        args.gt_dir_1, args.gt_dir_2, args.data_dir_1, args.data_dir_2
+    )
 
     balanced_data_train, balanced_data_val, balanced_data_test = split_data(
         balanced_data
     )
 
     # Datasets
-    training_generator = DataGenerator(args.data_dir, balanced_data_train)
-    validation_generator = DataGenerator(args.data_dir, balanced_data_val)
-    test_generator = DataGenerator(args.data_dir, balanced_data_test)
+    training_generator = DataGenerator(dir_mapping, balanced_data_train)
+    validation_generator = DataGenerator(dir_mapping, balanced_data_val)
+    test_generator = DataGenerator(dir_mapping, balanced_data_test)
     full_data_generator = DataGenerator(
-        args.data_dir,
+        dir_mapping,
         balanced_data,
     )
     model = train_model(lstm_model, training_generator, validation_generator)
