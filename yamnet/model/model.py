@@ -29,19 +29,22 @@ def load_ground_truth(gt_dir):
     # Get the ear data
     ear_data = pd.read_csv(gt_dir)
 
-    ear_data["TV"] = ear_data["TV"].replace(r"^\s*$", "0", regex=True)
-    ear_data["TV"] = ear_data["TV"].fillna("0")
-    ear_data["TV"] = ear_data["TV"].astype(int)
+    # Convert all column names to lowercase
+    ear_data.columns = map(str.lower, ear_data.columns)
 
-    # Keep only records where coders agree on "Tv" column
-    agreed_data = ear_data.groupby("FileName").filter(lambda x: x["TV"].nunique() == 1)
+    ear_data["tv"] = ear_data["tv"].replace(r"^\s*$", "0", regex=True)
+    ear_data["tv"] = ear_data["tv"].fillna("0")
+    ear_data["tv"] = ear_data["tv"].astype(int)
+
+    # Keep only records where coders agree on "tv" column
+    agreed_data = ear_data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
 
     # Drop duplicates based on FileName, keep the first record
-    agreed_data = agreed_data.drop_duplicates(subset="FileName", keep="first")
+    agreed_data = agreed_data.drop_duplicates(subset="filename", keep="first")
 
-    # Split the data into two groups based on the value of "Tv"
-    tv_0 = agreed_data[agreed_data["TV"] == 0]
-    tv_1 = agreed_data[agreed_data["TV"] == 1]
+    # Split the data into two groups based on the value of "tv"
+    tv_0 = agreed_data[agreed_data["tv"] == 0]
+    tv_1 = agreed_data[agreed_data["tv"] == 1]
 
     # Find out which group is larger
     larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
@@ -50,9 +53,10 @@ def load_ground_truth(gt_dir):
     # Randomly sample from the larger group to match the size of the smaller group
     larger_group = larger_group.sample(len(smaller_group), random_state=42)
     logging.info(f"Total data: {len(larger_group) + len(smaller_group)}")
+
     # Concatenate the balanced data
     balanced_data = pd.concat([larger_group, smaller_group])
-    balanced_data.set_index("FileName", inplace=True)
+    balanced_data.set_index("filename", inplace=True)
 
     return balanced_data
 
