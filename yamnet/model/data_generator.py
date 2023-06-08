@@ -30,7 +30,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         list_IDs_temp = [self.list_IDs[k] for k in indexes]
 
         # Generate data
-        X, y = self.__data_generation(list_IDs_temp)
+        X, y = self._data_generation(list_IDs_temp)
 
         return X, y
 
@@ -44,7 +44,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         if self.shuffle == True:
             np.random.shuffle(self.indexes)
 
-    def __data_generation(self, list_IDs_temp):
+    def _data_generation(self, list_IDs_temp):
         "Generates data containing batch_size samples"
         X = []
         y = []
@@ -61,6 +61,39 @@ class DataGenerator(tf.keras.utils.Sequence):
             except Exception as e:
                 continue
 
+        X = pad_sequences(X, dtype="float32", padding="post")
+        y = np.array(y)
+        y = to_categorical(y)
+
+        return X, y
+
+
+class DataGeneratorMultiple(DataGenerator):
+    def __init__(
+        self, data_dirs, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True
+    ):
+        "Initialization"
+        self.data_dirs = data_dirs
+        super().__init__(data_dirs, balanced_data, batch_size, dim, shuffle)
+
+    def _data_generation(self, list_IDs_temp):
+        "Generates data containing batch_size samples"
+        X = []
+        y = []
+
+        # Generate data
+        for ID in list_IDs_temp:
+            # Load sample and append to list
+            try:
+                # Get the correct directory for the ID
+                dir_path = self.data_dirs[ID]
+                sequence = np.load(f"{dir_path}/{ID}.npy", allow_pickle=True)
+                X.append(sequence)
+
+                # Store class
+                y.append(self.labels[self.list_IDs.index(ID)])
+            except Exception as e:
+                continue
         X = pad_sequences(X, dtype="float32", padding="post")
         y = np.array(y)
         y = to_categorical(y)
