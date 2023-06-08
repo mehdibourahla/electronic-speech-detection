@@ -76,7 +76,7 @@ def split_data(balanced_data):
 
 # LSTM Model
 def lstm_model(input_shape):
-    logging.info(f"Creating model with input shape {input_shape}")
+    logging.info(f"Creating LSTM model with input shape {input_shape}")
     adam = optimizers.Adam(3e-4)
     inputs = Input(shape=input_shape)
     x = layers.LSTM(64, return_sequences=True)(inputs)
@@ -90,7 +90,7 @@ def lstm_model(input_shape):
 
 # CNN Model
 def cnn_model(input_shape):
-    logging.info(f"Creating model with input shape {input_shape}")
+    logging.info(f"Creating CNN model with input shape {input_shape}")
     adam = optimizers.Adam(3e-4)
     inputs = Input(shape=input_shape)
     x = layers.Conv1D(128, kernel_size=3, activation="relu")(inputs)
@@ -122,7 +122,6 @@ def transformer_model(input_dim):
 
 
 def evaluate_model(model, test_generator, output_path):
-    logging.info("Evaluating model")
     y_pred = []
     y_test = []
     for i in range(len(test_generator)):
@@ -157,15 +156,16 @@ def evaluate_model(model, test_generator, output_path):
     return results
 
 
-def get_early_stopping_callback(patience=10):
-    return tf.keras.callbacks.EarlyStopping(
-        monitor="loss",
+def get_early_stopping_callback(monitor="val_loss", patience=10):
+    early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+        monitor=monitor,
         min_delta=0,
         patience=patience,
-        verbose=0,
+        verbose=1,
         mode="auto",
         restore_best_weights=True,
     )
+    return early_stopping_callback
 
 
 def plot_history(history, output_dir, model_name):
@@ -203,7 +203,9 @@ def train_model(
     model_name = model_func.__name__.split("_")[0]
 
     # Callbacks
-    early_stopping_callback = get_early_stopping_callback()
+    early_stopping_callback = get_early_stopping_callback(
+        monitor="val_loss" if validation_generator else "loss"
+    )
 
     # Get a batch of data
     data_batch, _ = training_generator.__getitem__(0)
@@ -225,8 +227,13 @@ def train_model(
             epochs=args.epochs,
             callbacks=[early_stopping_callback],
         )
+
         plot_history(history, args.output_dir, model_name)
 
+    # Log the epoch at which training was stopped
+    logging.info(
+        f"Training for {model_name} stopped at epoch {early_stopping_callback.stopped_epoch}"
+    )
     return model
 
 
@@ -235,7 +242,6 @@ def export_model(
     data_generator,
     args,
 ):
-    logging.info("Exporting model...")
     model_name = model_func.__name__.split("_")[0]
     # Train on all data and save the model
     model = train_model(model_func, args, data_generator)
@@ -297,8 +303,10 @@ def main(args):
     models_func = [lstm_model, cnn_model, transformer_model]
     for model_func in models_func:
         if args.deploy:
+            logging.info(f"### Exporting {model_func.__name__} model ###")
             export_model(model_func, full_data_generator, args)
         else:
+            logging.info(f"### Training {model_func.__name__} model ###")
             model = train_model(
                 model_func, args, training_generator, validation_generator
             )
