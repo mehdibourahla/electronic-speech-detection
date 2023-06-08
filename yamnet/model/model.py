@@ -1,28 +1,27 @@
+import os
+import json
+import logging
+import argparse
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+import matplotlib.pyplot as plt
+from transformer import TransformerClassifier
+from tensorflow.keras import layers, optimizers, Input, Model
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from tensorflow.keras.utils import to_categorical
 from sklearn.model_selection import train_test_split
-import logging
-import json
+from data_generator import DataGenerator
+
+os.environ["TFHUB_CACHE_DIR"] = "/users/mbourahl/.cache"
 
 
-def initialize_args(parser):
-    # Input paths
-    parser.add_argument("--dataset", required=True, help="Name of the data used")
-    parser.add_argument(
-        "--data_dir",
-        required=True,
-        help="Path to the directory containing NPY files",
-    )
-    parser.add_argument(
-        "--gt_dir", required=True, help="Path to the ground truth CSV file"
-    )
-    parser.add_argument(
-        "--output_dir", required=True, help="Path to Output the results"
-    )
+# Configure logging
+logging.basicConfig(
+    filename="model.log",
+    filemode="w",
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 
 
 def load_ground_truth(gt_dir):
@@ -61,31 +60,6 @@ def load_ground_truth(gt_dir):
     return balanced_data
 
 
-# Load pickle files
-def load_pickle_file(file_path):
-    with open(file_path, "rb") as f:
-        data = np.load(f, allow_pickle=True)
-    return data
-
-
-# Load and pad data
-def load_and_pad_data(data_dir, balanced_data):
-    data = []
-    y = []
-    for record in balanced_data.iterrows():
-        try:
-            sequence = np.load(f"{data_dir}/{record[0]}.npy", allow_pickle=True)
-            y.append(record[1]["tv"])
-            data.append(sequence)
-        except Exception as e:
-            logging.error(f"Error loading file {record[0]}.npy: {str(e)}")
-            continue
-    padded_data = pad_sequences(data, dtype="float32", padding="post")
-    y = np.array(y)
-    y = to_categorical(y)
-    return padded_data, y
-
-
 def split_data(balanced_data):
     # first split to train and temp
     balanced_data_train, balanced_data_temp = train_test_split(
@@ -100,7 +74,54 @@ def split_data(balanced_data):
     return balanced_data_train, balanced_data_val, balanced_data_test
 
 
-def evaluate_model(model, test_generator):
+# LSTM Model
+def lstm_model(input_shape):
+    logging.info(f"Creating model with input shape {input_shape}")
+    adam = optimizers.Adam(3e-4)
+    inputs = Input(shape=input_shape)
+    x = layers.LSTM(64, return_sequences=True)(inputs)
+    x = layers.LSTM(64)(x)
+    outputs = layers.Dense(2, activation="softmax")(x)
+    model = Model(inputs, outputs)
+    model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
+
+    return model
+
+
+# CNN Model
+def cnn_model(input_shape):
+    logging.info(f"Creating model with input shape {input_shape}")
+    adam = optimizers.Adam(3e-4)
+    inputs = Input(shape=input_shape)
+    x = layers.Conv1D(128, kernel_size=3, activation="relu")(inputs)
+    x = layers.GlobalAveragePooling1D()(x)
+    outputs = layers.Dense(2, activation="softmax")(x)
+    model = Model(inputs, outputs)
+    model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
+
+    return model
+
+
+# Transformer Model
+def transformer_model(input_dim):
+    adam = optimizers.Adam(3e-4)
+    # Define model parameters
+    num_layers = 2
+    embed_dim = input_dim[1]  # 1024
+    num_heads = 2
+    ff_dim = 512
+    num_classes = 2
+    input_shape = (None, embed_dim)
+
+    # Initialize and compile model
+    model = TransformerClassifier(
+        num_layers, embed_dim, num_heads, ff_dim, input_shape, num_classes
+    )
+    model.compile(optimizer=adam, loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+
+def evaluate_model(model, test_generator, output_path):
     logging.info("Evaluating model")
     y_pred = []
     y_test = []
@@ -130,15 +151,60 @@ def evaluate_model(model, test_generator):
         "f1": f1,
     }
 
+    with open(f"{output_path}_results.json", "w") as json_file:
+        json.dump(results, json_file)
+
     return results
+
+
+def get_early_stopping_callback(patience=10):
+    return tf.keras.callbacks.EarlyStopping(
+        monitor="loss",
+        min_delta=0,
+        patience=patience,
+        verbose=0,
+        mode="auto",
+        restore_best_weights=True,
+    )
+
+
+def plot_history(history, output_dir, model_name):
+    output_path = f"{output_dir}/{model_name}_history.png"
+    plt.figure(figsize=(12, 8))
+
+    # Plot the training and validation loss
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history["loss"])
+    plt.plot(history.history["val_loss"])
+    plt.title(f"{model_name.upper()} Model loss")
+    plt.ylabel("Loss")
+    plt.xlabel("Epoch")
+    plt.legend(["Train", "Val"], loc="upper right")
+
+    # Plot the training and validation accuracy
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history["accuracy"])
+    plt.plot(history.history["val_accuracy"])
+    plt.title(f"{model_name.upper()} Model accuracy")
+    plt.ylabel("Accuracy")
+    plt.xlabel("Epoch")
+    plt.legend(["Train", "Val"], loc="upper left")
+
+    plt.tight_layout()
+    plt.savefig(f"{output_path}")
 
 
 def train_model(
     model_func,
+    args,
     training_generator,
-    validation_generator,
-    epochs=10,
+    validation_generator=None,
 ):
+    model_name = model_func.__name__.split("_")[0]
+
+    # Callbacks
+    early_stopping_callback = get_early_stopping_callback()
+
     # Get a batch of data
     data_batch, _ = training_generator.__getitem__(0)
 
@@ -146,36 +212,35 @@ def train_model(
     input_shape = data_batch[0].shape
     model = model_func(input_shape)
 
-    model.fit(training_generator, validation_data=validation_generator, epochs=epochs)
+    if args.deploy:
+        model.fit(
+            training_generator,
+            epochs=args.epochs,
+            callbacks=[early_stopping_callback],
+        )
+    else:
+        history = model.fit(
+            training_generator,
+            validation_data=validation_generator,
+            epochs=args.epochs,
+            callbacks=[early_stopping_callback],
+        )
+        plot_history(history, args.output_dir, model_name)
 
     return model
-
-
-def save_training_results(results, args):
-    with open(
-        f"{args.output_dir}/ear_{args.dataset}_{args.model_name}_results.json", "w"
-    ) as json_file:
-        json.dump(results, json_file)
 
 
 def export_model(
     model_func,
     data_generator,
     args,
-    epochs=10,
 ):
     logging.info("Exporting model...")
-
+    model_name = model_func.__name__.split("_")[0]
     # Train on all data and save the model
-    # Get a batch of data
-    data_batch, _ = data_generator.__getitem__(0)
+    model = train_model(model_func, args, data_generator)
 
-    # Get the shape of a single sample
-    input_shape = data_batch[0].shape
-    model = model_func(input_shape)
-    model.fit(data_generator, epochs=epochs)
-
-    path = f"{args.output_dir}/{args.dataset}_{args.model_name}.tflite"
+    path = f"{args.output_dir}/{model_name}.tflite"
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
 
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
@@ -189,3 +254,59 @@ def export_model(
 
     with tf.io.gfile.GFile(path, "wb") as f:
         f.write(tflite_model)
+
+
+def initialize_args(parser):
+    # Input paths
+
+    # Add argument for number of epochs
+    parser.add_argument(
+        "--epochs", type=int, default=10, help="Number of epochs to train for"
+    )
+    parser.add_argument(
+        "--deploy", action="store_true", default=False, help="Deploy model or not"
+    )
+    parser.add_argument(
+        "--data_dir",
+        required=True,
+        help="Path to the directory containing NPY files",
+    )
+    parser.add_argument(
+        "--gt_dir", required=True, help="Path to the ground truth CSV file"
+    )
+    parser.add_argument(
+        "--output_dir", required=True, help="Path to Output the results"
+    )
+
+
+def main(args):
+    os.makedirs(args.output_dir, exist_ok=True)
+    balanced_data = load_ground_truth(args.gt_dir)
+
+    if args.deploy:
+        full_data_generator = DataGenerator(args.data_dir, balanced_data)
+
+    else:
+        balanced_data_train, balanced_data_val, balanced_data_test = split_data(
+            balanced_data
+        )
+        training_generator = DataGenerator(args.data_dir, balanced_data_train)
+        validation_generator = DataGenerator(args.data_dir, balanced_data_val)
+        test_generator = DataGenerator(args.data_dir, balanced_data_test)
+
+    models_func = [lstm_model, cnn_model, transformer_model]
+    for model_func in models_func:
+        if args.deploy:
+            export_model(model_func, full_data_generator, args)
+        else:
+            model = train_model(
+                model_func, args, training_generator, validation_generator
+            )
+            output_path = f"{args.output_dir}/{model_func.__name__.split('_')[0]}"
+            evaluate_model(model, test_generator, output_path)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    initialize_args(parser)
+    main(parser.parse_args())
