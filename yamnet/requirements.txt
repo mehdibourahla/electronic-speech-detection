@@ -7,3 +7,5 @@ seaborn
 numpy
 soundfile
 resampy
+scipy
+statistics
