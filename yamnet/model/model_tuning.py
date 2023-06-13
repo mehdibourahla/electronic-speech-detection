@@ -2,10 +2,9 @@ import os
 import argparse
 import keras_tuner as kt
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
 
-from model_builder import CNNHyperModel
-from model import load_balanced_data, load_ground_truth
+from model_builder import CNNHyperModel, LSTMHyperModel, TransformerHyperModel
+from model import load_balanced_data, load_ground_truth, evaluate_model
 from data_generator import DataGenerator, DataGeneratorMultiple
 
 
@@ -20,10 +19,14 @@ def get_early_stopping_callback(patience=10):
     )
 
 
-def get_hyper_model(directory, train_gen, val_gen, model_builder, epochs):
+def get_hyper_model(
+    directory, project_name, train_gen, val_gen, model_builder, hp_max_epochs
+):
     tuner = kt.Hyperband(
         model_builder,
         objective="val_loss",
+        max_epochs=hp_max_epochs,
+        project_name=project_name,
         factor=3,
         directory=directory,
     )
@@ -32,7 +35,7 @@ def get_hyper_model(directory, train_gen, val_gen, model_builder, epochs):
         train_gen,
         validation_data=val_gen,
         steps_per_epoch=len(train_gen),
-        epochs=epochs,
+        epochs=hp_max_epochs,
         callbacks=[get_early_stopping_callback(patience=3)],
     )
 
@@ -47,19 +50,23 @@ def train(params, model_builder, train_gen, val_gen):
 
     output_dir = params.output_dir
     epochs = params.epochs
+    hp_max_epochs = params.hp_max_epochs
+    project_name = params.project_name
 
     model = get_hyper_model(
         directory=output_dir,
+        project_name=project_name,
         train_gen=train_gen,
         val_gen=val_gen,
         model_builder=model_builder,
+        hp_max_epochs=hp_max_epochs,
         epochs=epochs,
     )
 
     checkpoint_dir = f"{output_dir}/checkpoints"
     os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = (
-        checkpoint_path
+        checkpoint_dir
         + "/{epoch:02d}-{loss:.4f}-{val_loss:.4f}-{accuracy:.4f}-{val_accuracy:.4f}.hdf5"
     )
 
@@ -104,6 +111,16 @@ def initialize_args(parser):
     parser.add_argument(
         "--output_dir", required=True, help="Path to Output the results"
     )
+    parser.add_argument(
+        "--i_fold", type=int, help="Split number (which fold is the test set?)"
+    )
+    parser.add_argument("--j_subfold", type=int, help="Validation fold")
+    parser.add_argument(
+        "--model_type", type=str, default="Transformer", help="LSTM, CNN or Transformer"
+    )
+    parser.add_argument(
+        "--hp_max_epochs", type=int, default=20, help="max_epochs in Hyperband opt"
+    )
 
 
 if __name__ == "__main__":
@@ -111,6 +128,21 @@ if __name__ == "__main__":
     initialize_args(parser)
     # Define all your command line arguments here
     args = parser.parse_args()
+    i_fold = args.i_fold
+    j_subfold = args.j_subfold
+    model_type = args.model_type.lower()
+
+    args.project_name = f"{model_type}_fold_{i_fold}_subfold_{j_subfold}"
+    args.output_dir = f"{args.output_dir}/{model_type}"
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    models_dict = {
+        "cnn": CNNHyperModel,
+        "lstm": LSTMHyperModel,
+        "transformer": TransformerHyperModel,
+    }
+
+    model_func = models_dict[model_type]
 
     # Load data
     if args.data_dir2 and args.gt_dir2:
@@ -124,16 +156,52 @@ if __name__ == "__main__":
         balanced_data = load_ground_truth(args.gt_dir)
         generator_class = DataGenerator
         generator_args = (args.data_dir,)
-    balanced_data_train, balanced_data_val = train_test_split(
-        balanced_data, test_size=0.2, random_state=42
-    )
-    training_generator = generator_class(*generator_args, balanced_data_train)
-    validation_generator = generator_class(*generator_args, balanced_data_val)
 
+    num_folds = 5
+    folds = []
+    n_records = len(balanced_data)
+    records_per_fold = n_records // num_folds
+
+    for i in range(num_folds):
+        folds.append(
+            balanced_data.iloc[
+                i * records_per_fold : min((i + 1) * records_per_fold, n_records)
+            ]
+        )
+
+    current_fold = folds[i_fold]
+    remaining_folds = [
+        fold_instance for fold_instance in folds if fold_instance != current_fold
+    ]
+    test_ids = current_fold
+
+    holdout_fold = remaining_folds[j_subfold]
+    train_ids = [
+        id_instance
+        for fold_instance in remaining_folds
+        if fold_instance != holdout_fold
+        for id_instance in fold_instance
+    ]
+    val_ids = holdout_fold
+
+    # Create data generators
+    train_data = balanced_data.iloc[train_ids]
+    train_gen = generator_class(*generator_args, train_data)
+
+    val_data = balanced_data.iloc[val_ids]
+    val_gen = generator_class(*generator_args, val_data, batch_size=1)
+
+    # Perform the model training and hyperparameter tuning
     # Get a batch of data
-    data_batch, _ = training_generator.__getitem__(0)
-
-    # Get the shape of a single sample
+    data_batch, _ = train_gen.__getitem__(0)
     input_shape = data_batch[0].shape
-    model_builder = CNNHyperModel(input_shape)
-    train(args, model_builder, training_generator, validation_generator)
+
+    model = model_func(input_shape)
+    train(args, model, train_gen, val_gen)
+
+    # Evaluate the model on the test data
+    test_data = balanced_data.iloc[test_ids]
+    test_gen = generator_class(*generator_args, test_data, batch_size=1)
+
+    output_path = f"{args.output_dir}/fold_{i_fold}_subfold_{j_subfold}"
+    evaluate_model(model, test_gen, output_path)
