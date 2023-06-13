@@ -1,11 +1,12 @@
-import numpy as np
-import pandas as pd
-import tensorflow as tf
+import os
 import json
-import argparse
 import logging
+import argparse
+import numpy as np
+import tensorflow as tf
 from data_generator import DataGenerator
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from model import load_ground_truth
 
 # Configure logging
 logging.basicConfig(
@@ -70,28 +71,6 @@ def evaluate_model(model, test_generator):
     return results
 
 
-def load_ground_truth(gt_dir):
-    # Get the ear data
-    ear_data = pd.read_csv(gt_dir)
-
-    # Convert all column names to lowercase
-    ear_data.columns = map(str.lower, ear_data.columns)
-
-    ear_data["tv"] = ear_data["tv"].replace(r"^\s*$", "0", regex=True)
-    ear_data["tv"] = ear_data["tv"].fillna("0")
-    ear_data["tv"] = ear_data["tv"].astype(int)
-
-    # Keep only records where coders agree on "tv" column
-    agreed_data = ear_data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
-
-    # Drop duplicates based on FileName, keep the first record
-    agreed_data = agreed_data.drop_duplicates(subset="filename", keep="first")
-
-    agreed_data.set_index("filename", inplace=True)
-
-    return agreed_data
-
-
 def initialize_args(parser):
     parser.add_argument(
         "--data_dir",
@@ -112,12 +91,14 @@ def initialize_args(parser):
     )
 
     parser.add_argument(
-        "--output_path", required=True, help="Path to the results file (.json)"
+        "--output_dir", required=True, help="Path to the output directory"
     )
 
 
 def main(args):
     logging.info("Starting the main function...")
+    os.makedirs(args.output_dir, exist_ok=True)
+    model_name = args.model.split("/")[-1].split(".")[0]
 
     ear_gt = load_ground_truth(args.gt_path)
     full_data_generator = DataGenerator(
@@ -127,7 +108,7 @@ def main(args):
 
     results = evaluate_model(args.model, full_data_generator)
 
-    with open(args.output_path, "w") as json_file:
+    with open(f"{args.output_dir}/{model_name}.json", "w") as json_file:
         json.dump(results, json_file)
     logging.info("Finished processing.")
 
