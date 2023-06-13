@@ -9,3 +9,4 @@ soundfile
 resampy
 scipy
 statistics
+keras_tuner
