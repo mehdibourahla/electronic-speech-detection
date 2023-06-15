@@ -1,5 +1,6 @@
 import os
 import argparse
+import numpy as np
 import keras_tuner as kt
 import tensorflow as tf
 
@@ -60,7 +61,6 @@ def train(params, model_builder, train_gen, val_gen):
         val_gen=val_gen,
         model_builder=model_builder,
         hp_max_epochs=hp_max_epochs,
-        epochs=epochs,
     )
 
     checkpoint_dir = f"{output_dir}/checkpoints"
@@ -84,6 +84,8 @@ def train(params, model_builder, train_gen, val_gen):
         callbacks=[checkpoint_callback, early_stopping_callback],
     )
 
+    return model
+
 
 def initialize_args(parser):
     # Input paths
@@ -91,6 +93,11 @@ def initialize_args(parser):
     # Add argument for number of epochs
     parser.add_argument(
         "--epochs", type=int, default=10, help="Number of epochs to train for"
+    )
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Dataset name",
     )
     parser.add_argument(
         "--data_dir",
@@ -131,8 +138,9 @@ if __name__ == "__main__":
     i_fold = args.i_fold
     j_subfold = args.j_subfold
     model_type = args.model_type.lower()
+    dataset_name = args.dataset
 
-    args.project_name = f"{model_type}_fold_{i_fold}_subfold_{j_subfold}"
+    args.project_name = f"{dataset_name}_{model_type}_fold_{i_fold}_subfold_{j_subfold}"
     args.output_dir = f"{args.output_dir}/{model_type}"
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -157,51 +165,64 @@ if __name__ == "__main__":
         generator_class = DataGenerator
         generator_args = (args.data_dir,)
 
+    balanced_data = balanced_data.sample(frac=1)
+
     num_folds = 5
     folds = []
     n_records = len(balanced_data)
     records_per_fold = n_records // num_folds
 
+    indices = balanced_data.index.tolist()
+    indices = np.array(indices)
+
+    np.random.seed(42)
+    np.random.shuffle(indices)
+
     for i in range(num_folds):
         folds.append(
-            balanced_data.iloc[
-                i * records_per_fold : min((i + 1) * records_per_fold, n_records)
+            balanced_data.loc[
+                indices[
+                    i * records_per_fold : min((i + 1) * records_per_fold, n_records)
+                ]
             ]
         )
 
     current_fold = folds[i_fold]
     remaining_folds = [
-        fold_instance for fold_instance in folds if fold_instance != current_fold
+        fold_instance.index
+        for fold_instance in folds
+        if not fold_instance.equals(current_fold)
     ]
-    test_ids = current_fold
+
+    test_ids = [fold_instance for fold_instance in current_fold.index]
 
     holdout_fold = remaining_folds[j_subfold]
     train_ids = [
-        id_instance
+        index
         for fold_instance in remaining_folds
-        if fold_instance != holdout_fold
-        for id_instance in fold_instance
+        if not fold_instance.equals(holdout_fold)
+        for index in fold_instance
     ]
     val_ids = holdout_fold
 
     # Create data generators
-    train_data = balanced_data.iloc[train_ids]
+    train_data = balanced_data.loc[train_ids]
     train_gen = generator_class(*generator_args, train_data)
 
-    val_data = balanced_data.iloc[val_ids]
-    val_gen = generator_class(*generator_args, val_data, batch_size=1)
+    val_data = balanced_data.loc[val_ids]
+    val_gen = generator_class(*generator_args, val_data)
 
     # Perform the model training and hyperparameter tuning
     # Get a batch of data
     data_batch, _ = train_gen.__getitem__(0)
     input_shape = data_batch[0].shape
 
-    model = model_func(input_shape)
-    train(args, model, train_gen, val_gen)
+    model_builder = model_func(input_shape)
+    model = train(args, model_builder, train_gen, val_gen)
 
     # Evaluate the model on the test data
-    test_data = balanced_data.iloc[test_ids]
-    test_gen = generator_class(*generator_args, test_data, batch_size=1)
+    test_data = balanced_data.loc[test_ids]
+    test_gen = generator_class(*generator_args, test_data)
 
     output_path = f"{args.output_dir}/fold_{i_fold}_subfold_{j_subfold}"
     evaluate_model(model, test_gen, output_path)

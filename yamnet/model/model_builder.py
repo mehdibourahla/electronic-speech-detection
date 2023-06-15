@@ -37,7 +37,7 @@ class CNNHyperModel(HyperModel):
 
 
 class LSTMHyperModel(HyperModel):
-    def __init__(self, input_shape, num_classes):
+    def __init__(self, input_shape):
         self.input_shape = input_shape
 
     def build(self, hp):
@@ -71,9 +71,8 @@ class LSTMHyperModel(HyperModel):
 
 
 class TransformerHyperModel(HyperModel):
-    def __init__(self, input_dim, num_classes):
+    def __init__(self, input_dim):
         self.input_dim = input_dim
-        self.num_classes = num_classes
 
     def build(self, hp):
         num_layers = hp.Int("num_layers", min_value=1, max_value=4, step=1)
@@ -83,7 +82,7 @@ class TransformerHyperModel(HyperModel):
         input_shape = (None, embed_dim)
 
         model = TransformerClassifier(
-            num_layers, embed_dim, num_heads, ff_dim, input_shape, self.num_classes
+            num_layers, embed_dim, num_heads, ff_dim, input_shape, 2
         )
 
         model.compile(
