@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import argparse
 import logging
@@ -81,6 +82,8 @@ def main(args):
 
     audio_dir = args.audio_dir
     output_dir = args.output_dir
+
+    os.makedirs(output_dir, exist_ok=True)
 
     params = yamnet_params.Params()
     yamnet = yamnet_model.yamnet_frames_model(params)
