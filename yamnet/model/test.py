@@ -5,7 +5,13 @@ import argparse
 import numpy as np
 import tensorflow as tf
 from data_generator import DataGenerator
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+)
 from model import load_ground_truth
 
 # Configure logging
@@ -61,11 +67,16 @@ def evaluate_model(model, test_generator):
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
 
+    # Calculate specificity
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) != 0 else 0
+
     results = {
         "accuracy": accuracy,
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "specificity": specificity,
     }
 
     return results
