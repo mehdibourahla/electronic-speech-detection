@@ -135,22 +135,36 @@ def load_balanced_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
     return final_balanced_data, dir_mapping
 
 
-def load_ground_truth(gt_dir):
+def load_ground_truth(gt_dir, data_dir, fold=1, step_ratio=0.5):
     # Get the ear data
+    gt_filemame = os.path.basename(gt_dir)
+    print("Ground truth filename:", gt_filemame)
+
     ear_data = pd.read_csv(gt_dir)
+    print("Shape of GT after reading:", ear_data.shape)
+
+    # Get the list of .npy files in the directory
+    files_in_dir = [
+        os.path.splitext(f)[0] for f in os.listdir(data_dir) if f.endswith(".npy")
+    ]
+    print("Number of .npy files in directory:", len(files_in_dir))
 
     # Convert all column names to lowercase
     ear_data.columns = map(str.lower, ear_data.columns)
 
+    # Filter data based on the filenames in the directories
+    ear_data = ear_data[ear_data["filename"].isin(files_in_dir)]
+    print("Shape of GT after filtering by filenames:", ear_data.shape)
+
+    # Process the data
     ear_data["tv"] = ear_data["tv"].replace(r"^\s*$", "0", regex=True)
     ear_data["tv"] = ear_data["tv"].fillna("0")
     ear_data["tv"] = ear_data["tv"].astype(int)
-
     # Keep only records where coders agree on "tv" column
     agreed_data = ear_data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
-
     # Drop duplicates based on FileName, keep the first record
     agreed_data = agreed_data.drop_duplicates(subset="filename", keep="first")
+    print("Shape of GT after processing:", agreed_data.shape)
 
     # Split the data into two groups based on the value of "tv"
     tv_0 = agreed_data[agreed_data["tv"] == 0]
@@ -160,12 +174,24 @@ def load_ground_truth(gt_dir):
     larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
     smaller_group = tv_1 if larger_group is tv_0 else tv_0
 
-    # Randomly sample from the larger group to match the size of the smaller group
-    larger_group = larger_group.sample(len(smaller_group), random_state=42)
-    logging.info(f"Total data: {len(larger_group) + len(smaller_group)}")
+    # Calculate step size for the sliding window approach
+    step_size = int(len(smaller_group) * step_ratio)
+
+    # Calculate the number of possible folds based on the step size
+    num_folds = (len(larger_group) - len(smaller_group)) // step_size + 1
+
+    # If the fold parameter is greater than the number of folds, set it to the last fold
+    if fold > num_folds:
+        print(f"Fold {fold} does not exist, using fold {num_folds}")
+        fold = num_folds
+
+    # Create the desired fold using the fold parameter
+    start_idx = (fold - 1) * step_size
+    end_idx = start_idx + len(smaller_group)
+    selected_fold = larger_group.iloc[start_idx:end_idx]
 
     # Concatenate the balanced data
-    balanced_data = pd.concat([larger_group, smaller_group])
+    balanced_data = pd.concat([selected_fold, smaller_group])
     balanced_data.set_index("filename", inplace=True)
 
     return balanced_data
@@ -327,14 +353,11 @@ def train_model(
         callbacks=[early_stopping_callback],
     )
 
-    if args.deploy:
-        plot_history(history, args.output_dir, model_name)
-
     # Log the epoch at which training was stopped
     logging.info(
         f"Training for {model_name} stopped at epoch {early_stopping_callback.stopped_epoch}"
     )
-    return model
+    return history, model
 
 
 def export_model(
@@ -344,22 +367,8 @@ def export_model(
     args,
 ):
     model_name = model_func.__name__.split("_")[0]
-
-    # Callbacks
-    early_stopping_callback = get_early_stopping_callback(monitor="val_loss")
-
-    # Get a batch of data
-    data_batch, _ = training_generator.__getitem__(0)
-
-    # Get the shape of a single sample
-    input_shape = data_batch[0].shape
-    model = model_func(input_shape)
-
-    history = model.fit(
-        training_generator,
-        validation_data=validation_generator,
-        epochs=args.epochs,
-        callbacks=[early_stopping_callback],
+    history, model = train_model(
+        model_func, args, training_generator, validation_generator
     )
 
     plot_history(history, args.output_dir, model_name)
@@ -400,6 +409,7 @@ def initialize_args(parser):
     parser.add_argument(
         "--gt_dir2", default=None, help="Path to the ground truth CSV file"
     )
+    parser.add_argument("--fold", type=int, default=1, help="Fold to use for training")
     parser.add_argument(
         "--output_dir", required=True, help="Path to Output the results"
     )
@@ -417,7 +427,7 @@ def main(args):
         generator_class = DataGeneratorMultiple
         generator_args = (dir_mapping,)
     else:
-        balanced_data = load_ground_truth(args.gt_dir)
+        balanced_data = load_ground_truth(args.gt_dir, args.data_dir, args.fold)
         generator_class = DataGenerator
         generator_args = (args.data_dir,)
 
@@ -447,7 +457,9 @@ def main(args):
         export_model(model_func, training_generator, validation_generator, args)
     else:
         logging.info(f"### Training {model_func.__name__} model ###")
-        model = train_model(model_func, args, training_generator, validation_generator)
+        _, model = train_model(
+            model_func, args, training_generator, validation_generator
+        )
         output_path = f"{args.output_dir}/{model_func.__name__.split('_')[0]}"
         evaluate_model(model, test_generator, output_path)
 
