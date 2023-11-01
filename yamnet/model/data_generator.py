@@ -61,7 +61,9 @@ class DataGenerator(tf.keras.utils.Sequence):
             except Exception as e:
                 continue
 
-        X = pad_sequences(X, dtype="float32", padding="post")
+        X = pad_sequences(
+            X, maxlen=31, dtype="float32", padding="post", truncating="post"
+        )
         y = np.array(y)
         y = to_categorical(y)
 
@@ -80,7 +82,7 @@ class DataGeneratorMultiple(DataGenerator):
         "Generates data containing batch_size samples"
         X = []
         y = []
-
+        failures = 0
         # Generate data
         for ID in list_IDs_temp:
             # Load sample and append to list
@@ -93,9 +95,18 @@ class DataGeneratorMultiple(DataGenerator):
                 # Store class
                 y.append(self.labels[self.list_IDs.index(ID)])
             except Exception as e:
+                failures += 1
+                print(e)
                 continue
-        X = pad_sequences(X, dtype="float32", padding="post")
+        X = pad_sequences(
+            X, maxlen=31, dtype="float32", padding="post", truncating="post"
+        )
         y = np.array(y)
         y = to_categorical(y)
 
+        print(f"Failures in this batch: {failures}")
+
         return X, y
+
+    def load_all_data(self):
+        return self._data_generation(self.list_IDs)

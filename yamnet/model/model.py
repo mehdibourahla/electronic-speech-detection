@@ -6,9 +6,14 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import matplotlib.pyplot as plt
-from transformer import TransformerClassifier
 from tensorflow.keras import layers, optimizers, Input, Model
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+)
 from sklearn.model_selection import train_test_split
 from data_generator import DataGenerator, DataGeneratorMultiple
 
@@ -23,56 +28,110 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
+np.random.seed(42)
+tf.random.set_seed(42)
+
 
 def load_balanced_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
     # Load data
     data_1 = pd.read_csv(gt_dir_1)
     data_2 = pd.read_csv(gt_dir_2)
 
+    print("Shape of data_1 after reading:", data_1.shape)
+    print("Shape of data_2 after reading:", data_2.shape)
+
+    # Get the list of .npy files in the respective directories
+    files_in_dir_1 = [
+        os.path.splitext(f)[0] for f in os.listdir(data_dir_1) if f.endswith(".npy")
+    ]
+    files_in_dir_2 = [
+        os.path.splitext(f)[0] for f in os.listdir(data_dir_2) if f.endswith(".npy")
+    ]
+
+    print("Number of .npy files in dir_1:", len(files_in_dir_1))
+    print("Number of .npy files in dir_2:", len(files_in_dir_2))
+
     # Convert all column names to lowercase
     data_1.columns = map(str.lower, data_1.columns)
     data_2.columns = map(str.lower, data_2.columns)
 
+    # Filter data based on the filenames in the directories
+    data_1 = data_1[data_1["filename"].isin(files_in_dir_1)]
+    data_2 = data_2[data_2["filename"].isin(files_in_dir_2)]
+
+    print("Shape of data_1 after filtering by filenames:", data_1.shape)
+    print("Shape of data_2 after filtering by filenames:", data_2.shape)
+
     # Process both datasets
     data_list = [data_1, data_2]
-    for data in data_list:
-        data["tv"] = data["tv"].replace(r"^\s*$", "0", regex=True)
-        data["tv"] = data["tv"].fillna("0")
-        data["tv"] = data["tv"].astype(int)
-        data = data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
-        data = data.drop_duplicates(subset="filename", keep="first")
+    for i, data in enumerate(data_list):
+        data_list[i]["tv"] = data["tv"].replace(r"^\s*$", "0", regex=True)
+        data_list[i]["tv"] = data["tv"].fillna("0")
+        data_list[i]["tv"] = data["tv"].astype(int)
+        data_list[i] = data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
+        data_list[i] = data.drop_duplicates(subset="filename", keep="first")
 
-    # Now data_1 and data_2 are cleaned, so we balance them
-    # Firstly, balance between datasets
-    larger_dataset = data_1 if len(data_1) > len(data_2) else data_2
-    smaller_dataset = data_2 if larger_dataset is data_1 else data_1
-    larger_dataset = larger_dataset.sample(len(smaller_dataset), random_state=42)
+    # Re-assign the modified data back to data_1 and data_2
+    data_1, data_2 = data_list
 
-    # Secondly, balance within each dataset
+    print("Shape of data_1 after processing:", data_1.shape)
+    print("Shape of data_2 after processing:", data_2.shape)
+
+    # Firstly, balance within each dataset
     balanced_data_list = []
-    dir_mapping = {}
-    for idx, data in enumerate([larger_dataset, smaller_dataset]):
+    for idx, data in enumerate(data_list):
         tv_0 = data[data["tv"] == 0][["filename", "tv"]]
         tv_1 = data[data["tv"] == 1][["filename", "tv"]]
         larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
         smaller_group = tv_1 if larger_group is tv_0 else tv_0
+        print(f"Dataset {idx+1} larger group size:", len(larger_group))
+        print(f"Dataset {idx+1} smaller group size:", len(smaller_group))
+
         larger_group = larger_group.sample(len(smaller_group), random_state=42)
         balanced_data = pd.concat([larger_group, smaller_group])
-        balanced_data.set_index("filename", inplace=True)
         balanced_data_list.append(balanced_data)
 
-        # Create directory mapping
+    # Now balance between datasets
+    min_tv_0 = min(
+        len(balanced_data_list[0][balanced_data_list[0]["tv"] == 0]),
+        len(balanced_data_list[1][balanced_data_list[1]["tv"] == 0]),
+    )
+    min_tv_1 = min(
+        len(balanced_data_list[0][balanced_data_list[0]["tv"] == 1]),
+        len(balanced_data_list[1][balanced_data_list[1]["tv"] == 1]),
+    )
+
+    print("Minimum tv_0 count between datasets:", min_tv_0)
+    print("Minimum tv_1 count between datasets:", min_tv_1)
+
+    dir_mapping = {}
+    # Downsample both datasets to the minimum counts
+    for i in range(len(balanced_data_list)):
+        tv_0_sample = balanced_data_list[i][balanced_data_list[i]["tv"] == 0].sample(
+            min_tv_0, random_state=42
+        )
+        tv_1_sample = balanced_data_list[i][balanced_data_list[i]["tv"] == 1].sample(
+            min_tv_1, random_state=42
+        )
+        balanced_data_list[i] = pd.concat([tv_0_sample, tv_1_sample])
+        balanced_data_list[i].set_index("filename", inplace=True)
+
+        print(
+            f"Dataset {i+1} after balancing between datasets:",
+            balanced_data_list[i].shape,
+        )
+
         dir_mapping.update(
             {
-                filename: data_dir_1 if idx == 0 else data_dir_2
-                for filename in balanced_data.index
+                filename: data_dir_1 if i == 0 else data_dir_2
+                for filename in balanced_data_list[i].index
             }
         )
 
     # Combine the balanced datasets
     final_balanced_data = pd.concat(balanced_data_list)
-    logging.info(f"Total data: {len(final_balanced_data)}")
 
+    print("Final balanced data shape:", final_balanced_data.shape)
     return final_balanced_data, dir_mapping
 
 
@@ -128,12 +187,23 @@ def split_data(balanced_data):
 
 # LSTM Model
 def lstm_model(input_shape):
-    logging.info(f"Creating LSTM model with input shape {input_shape}")
     adam = optimizers.Adam(3e-4)
     inputs = Input(shape=input_shape)
-    x = layers.LSTM(64, return_sequences=True)(inputs)
-    x = layers.LSTM(64)(x)
-    outputs = layers.Dense(2, activation="softmax")(x)
+
+    # Using glorot_uniform (Xavier) for LSTM and he_normal for Dense with softmax
+    x = layers.LSTM(
+        64,
+        return_sequences=True,
+        kernel_initializer="glorot_uniform",
+        recurrent_initializer="orthogonal",
+    )(inputs)
+    x = layers.LSTM(
+        64, kernel_initializer="glorot_uniform", recurrent_initializer="orthogonal"
+    )(x)
+    outputs = layers.Dense(
+        2, activation="softmax", kernel_initializer="glorot_uniform"
+    )(x)
+
     model = Model(inputs, outputs)
     model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
 
@@ -151,25 +221,6 @@ def cnn_model(input_shape):
     model = Model(inputs, outputs)
     model.compile(adam, "categorical_crossentropy", metrics=["accuracy"])
 
-    return model
-
-
-# Transformer Model
-def transformer_model(input_dim):
-    adam = optimizers.Adam(3e-4)
-    # Define model parameters
-    num_layers = 2
-    embed_dim = input_dim[1]  # 1024
-    num_heads = 2
-    ff_dim = 512
-    num_classes = 2
-    input_shape = (None, embed_dim)
-
-    # Initialize and compile model
-    model = TransformerClassifier(
-        num_layers, embed_dim, num_heads, ff_dim, input_shape, num_classes
-    )
-    model.compile(optimizer=adam, loss="categorical_crossentropy", metrics=["accuracy"])
     return model
 
 
@@ -195,11 +246,16 @@ def evaluate_model(model, test_generator, output_path):
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
 
+    # Calculate specificity
+    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) != 0 else 0
+
     results = {
         "accuracy": accuracy,
         "precision": precision,
         "recall": recall,
         "f1": f1,
+        "specificity": specificity,
     }
 
     with open(f"{output_path}_results.json", "w") as json_file:
@@ -288,23 +344,29 @@ def export_model(
     args,
 ):
     model_name = model_func.__name__.split("_")[0]
-    # Train on all data and save the model
-    model = train_model(model_func, args, training_generator, validation_generator)
 
-    path = f"{args.output_dir}/{model_name}_v2.tflite"
-    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    # Callbacks
+    early_stopping_callback = get_early_stopping_callback(monitor="val_loss")
 
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.experimental_new_converter = True
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS,
-        tf.lite.OpsSet.SELECT_TF_OPS,
-    ]
+    # Get a batch of data
+    data_batch, _ = training_generator.__getitem__(0)
 
-    tflite_model = converter.convert()
+    # Get the shape of a single sample
+    input_shape = data_batch[0].shape
+    model = model_func(input_shape)
 
-    with tf.io.gfile.GFile(path, "wb") as f:
-        f.write(tflite_model)
+    history = model.fit(
+        training_generator,
+        validation_data=validation_generator,
+        epochs=args.epochs,
+        callbacks=[early_stopping_callback],
+    )
+
+    plot_history(history, args.output_dir, model_name)
+
+    # Save the model weights as .h5
+    path = f"{args.output_dir}/{model_name}_v2.h5"
+    model.save_weights(path)
 
 
 def initialize_args(parser):
@@ -316,6 +378,11 @@ def initialize_args(parser):
     )
     parser.add_argument(
         "--deploy", action="store_true", default=False, help="Deploy model or not"
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="Model to use for training or deployment",
     )
     parser.add_argument(
         "--data_dir",
@@ -369,20 +436,20 @@ def main(args):
         training_generator, validation_generator, test_generator = data_generators
 
     # Define models
-    models_func = [lstm_model, cnn_model, transformer_model]
+    models_map = {
+        "lstm": lstm_model,
+        "cnn": cnn_model,
+    }
+    model_func = models_map[args.model]
 
-    # Train or deploy models
-    for model_func in models_func:
-        if args.deploy:
-            logging.info(f"### Exporting {model_func.__name__} model ###")
-            export_model(model_func, training_generator, validation_generator, args)
-        else:
-            logging.info(f"### Training {model_func.__name__} model ###")
-            model = train_model(
-                model_func, args, training_generator, validation_generator
-            )
-            output_path = f"{args.output_dir}/{model_func.__name__.split('_')[0]}"
-            evaluate_model(model, test_generator, output_path)
+    if args.deploy:
+        logging.info(f"### Exporting {model_func.__name__} model ###")
+        export_model(model_func, training_generator, validation_generator, args)
+    else:
+        logging.info(f"### Training {model_func.__name__} model ###")
+        model = train_model(model_func, args, training_generator, validation_generator)
+        output_path = f"{args.output_dir}/{model_func.__name__.split('_')[0]}"
+        evaluate_model(model, test_generator, output_path)
 
 
 if __name__ == "__main__":
