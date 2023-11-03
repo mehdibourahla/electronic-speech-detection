@@ -1,6 +1,6 @@
 import os
 import json
-import logging
+import pandas as pd
 import argparse
 import numpy as np
 import tensorflow as tf
@@ -12,72 +12,74 @@ from sklearn.metrics import (
     f1_score,
     confusion_matrix,
 )
-from model import load_ground_truth
-
-# Configure logging
-logging.basicConfig(
-    filename="test.log",
-    filemode="w",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+from model import lstm_model
 
 
-def get_model(model_path):
-    # Load TFLite model and allocate tensors.
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
+def load_ground_truth(gt_dir, data_dir):
+    # Get the ear data
+    gt_filemame = os.path.basename(gt_dir)
+    print("Ground truth filename:", gt_filemame)
 
-    # Get input and output tensors.
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+    ear_data = pd.read_csv(gt_dir)
+    print("Shape of GT after reading:", ear_data.shape)
 
-    return interpreter, input_details, output_details
+    # Get the list of .npy files in the directory
+    files_in_dir = [
+        os.path.splitext(f)[0] for f in os.listdir(data_dir) if f.endswith(".npy")
+    ]
+    print("Number of .npy files in directory:", len(files_in_dir))
+
+    # Convert all column names to lowercase
+    ear_data.columns = map(str.lower, ear_data.columns)
+
+    # Filter data based on the filenames in the directories
+    ear_data = ear_data[ear_data["filename"].isin(files_in_dir)]
+    print("Shape of GT after filtering by filenames:", ear_data.shape)
+
+    # Process the data
+    ear_data["tv"] = ear_data["tv"].replace(r"^\s*$", "0", regex=True)
+    ear_data["tv"] = ear_data["tv"].fillna("0")
+    ear_data["tv"] = ear_data["tv"].astype(int)
+    # Keep only records where coders agree on "tv" column
+    agreed_data = ear_data.groupby("filename").filter(lambda x: x["tv"].nunique() == 1)
+    # Drop duplicates based on FileName, keep the first record
+    agreed_data = agreed_data.drop_duplicates(subset="filename", keep="first")
+    print("Shape of GT after processing:", agreed_data.shape)
+
+    agreed_data.set_index("filename", inplace=True)
+
+    return agreed_data
 
 
-def evaluate_model(model, test_generator):
-    logging.info("Evaluating model")
+def load_and_predict(model_func, weights_path, input_data):
+    input_shape = input_data[0].shape
 
-    interpreter, input_details, output_details = get_model(model)
+    model = model_func(input_shape)
+    model.load_weights(weights_path)
+    y_pred = model.predict(input_data)[:, 1]
 
-    y_pred = []
-    y_test = []
-    for i in range(len(test_generator)):
-        x_batch, y_batch = test_generator[i]
-        for x, y in zip(x_batch, y_batch):
-            interpreter.set_tensor(input_details[0]["index"], [x])
-            interpreter.invoke()
-            output_data = interpreter.get_tensor(output_details[0]["index"])
+    return y_pred
 
-            y_pred.append(output_data[0][1])
-            y_test.append(y)
 
-    # Convert lists to arrays
-    y_pred = np.array(y_pred)
-    y_test = np.array(y_test)
-
-    # Convert predictions from one-hot to labels
-    y_pred = (y_pred > 0.5).astype(int)
-    if y_test.ndim > 1:
-        y_test = np.argmax(y_test, axis=1)
-
-    # Compute metrics
+def compute_metrics(y_pred, y_test):
     accuracy = accuracy_score(y_test, y_pred)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred)
+    TN, FP, FN, TP = cm.ravel() if cm.shape == (2, 2) else (cm[0, 0], 0, 0, 0)
+    specificity = TN / (TN + FP) if (TN + FP) != 0 else 0
+    return accuracy, precision, recall, f1, specificity
 
-    # Calculate specificity
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
-    specificity = tn / (tn + fp) if (tn + fp) != 0 else 0
 
-    results = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "specificity": specificity,
-    }
+def model_evaluation(X, y, model_path, threshold=0.5):
+    y_pred = load_and_predict(lstm_model, model_path, X)
+    y_pred_th = (y_pred > threshold).astype(int)
+    y = y[:, 1]
+    metrics = compute_metrics(y_pred_th, y)
+    results = dict(
+        zip(["accuracy", "precision", "recall", "f1", "specificity"], metrics)
+    )
 
     return results
 
@@ -98,7 +100,7 @@ def initialize_args(parser):
     parser.add_argument(
         "--model",
         required=True,
-        help="Path to the model (.tflite) file)",
+        help="Path to the model (.h5) file)",
     )
 
     parser.add_argument(
@@ -107,21 +109,21 @@ def initialize_args(parser):
 
 
 def main(args):
-    logging.info("Starting the main function...")
     os.makedirs(args.output_dir, exist_ok=True)
     model_name = args.model.split("/")[-1].split(".")[0]
 
-    ear_gt = load_ground_truth(args.gt_path)
+    ear_gt = load_ground_truth(args.gt_path, args.data_dir)
     full_data_generator = DataGenerator(
         args.data_dir,
         ear_gt,
     )
 
-    results = evaluate_model(args.model, full_data_generator)
+    X, y = full_data_generator.load_all_data()
+
+    results = model_evaluation(X, y, args.model)
 
     with open(f"{args.output_dir}/{model_name}.json", "w") as json_file:
         json.dump(results, json_file)
-    logging.info("Finished processing.")
 
 
 if __name__ == "__main__":

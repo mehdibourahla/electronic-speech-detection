@@ -69,6 +69,9 @@ class DataGenerator(tf.keras.utils.Sequence):
 
         return X, y
 
+    def load_all_data(self):
+        return self._data_generation(self.list_IDs)
+
 
 class DataGeneratorMultiple(DataGenerator):
     def __init__(
