@@ -51,6 +51,40 @@ def load_ground_truth(gt_dir, data_dir):
     return agreed_data
 
 
+def load_sins_gt(gt_dir, data_dir):
+    gt_filemame = os.path.basename(gt_dir)
+    print("Ground truth filename:", gt_filemame)
+
+    df = pd.read_csv(gt_dir)
+
+    # Replace "watching tv" with 1
+    df.loc[df["activity"] == "watching tv", "activity"] = 1
+    df.loc[df["activity"] != 1, "activity"] = 0
+
+    df = df.rename(columns={"activity": "tv"})
+    df = df.rename(columns={"audio_file": "filename"})
+
+    # Get the list of .npy files in the directory
+    files_in_dir = [
+        os.path.splitext(f)[0] for f in os.listdir(data_dir) if f.endswith(".npy")
+    ]
+    print("Number of .npy files in directory:", len(files_in_dir))
+
+    df = df[df["filename"].isin(files_in_dir)]
+    print("Shape of GT after filtering by filenames:", df.shape)
+
+    # Split the data into two groups based on the value of "tv"
+    tv_0 = df[df["tv"] == 0]
+    tv_1 = df[df["tv"] == 1]
+
+    print("Number of records with tv=0:", len(tv_0))
+    print("Number of records with tv=1:", len(tv_1))
+
+    df.set_index("filename", inplace=True)
+
+    return df
+
+
 def load_and_predict(model_func, weights_path, input_data):
     input_shape = input_data[0].shape
 
@@ -104,6 +138,12 @@ def initialize_args(parser):
     )
 
     parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Dataset name",
+    )
+
+    parser.add_argument(
         "--output_dir", required=True, help="Path to the output directory"
     )
 
@@ -112,10 +152,16 @@ def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
     model_name = args.model.split("/")[-1].split(".")[0]
 
-    ear_gt = load_ground_truth(args.gt_path, args.data_dir)
+    if args.dataset == "SINS":
+        gt = load_sins_gt(args.gt_path, args.data_dir)
+    elif args.dataset == "DSE" or args.dataset == "Aging":
+        gt = load_ground_truth(args.gt_path, args.data_dir)
+    else:
+        raise ValueError("Dataset not supported")
+
     full_data_generator = DataGenerator(
         args.data_dir,
-        ear_gt,
+        gt,
     )
 
     X, y = full_data_generator.load_all_data()
