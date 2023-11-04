@@ -32,10 +32,15 @@ np.random.seed(42)
 tf.random.set_seed(42)
 
 
-def load_balanced_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
+def load_balanced_data(
+    gt_dir_1, gt_dir_2, data_dir_1, data_dir_2, fold_1, fold_2, step_ratio=0.5
+):
     # Load data
     data_1 = pd.read_csv(gt_dir_1)
     data_2 = pd.read_csv(gt_dir_2)
+
+    print(f"Ground truth filename: {os.path.basename(gt_dir_1)} Fold {fold_1}")
+    print(f"Ground truth filename: {os.path.basename(gt_dir_2)} Fold {fold_2}")
 
     print("Shape of data_1 after reading:", data_1.shape)
     print("Shape of data_2 after reading:", data_2.shape)
@@ -84,11 +89,18 @@ def load_balanced_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
         tv_1 = data[data["tv"] == 1][["filename", "tv"]]
         larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
         smaller_group = tv_1 if larger_group is tv_0 else tv_0
+
+        step_size = int(len(smaller_group) * step_ratio)
+        fold = fold_1 if idx == 0 else fold_2
+
+        start_idx = (fold - 1) * step_size
+        end_idx = start_idx + len(smaller_group)
+        selected_fold = larger_group.iloc[start_idx:end_idx]
+
         print(f"Dataset {idx+1} larger group size:", len(larger_group))
         print(f"Dataset {idx+1} smaller group size:", len(smaller_group))
 
-        larger_group = larger_group.sample(len(smaller_group), random_state=42)
-        balanced_data = pd.concat([larger_group, smaller_group])
+        balanced_data = pd.concat([selected_fold, smaller_group])
         balanced_data_list.append(balanced_data)
 
     # Now balance between datasets
@@ -409,7 +421,12 @@ def initialize_args(parser):
     parser.add_argument(
         "--gt_dir2", default=None, help="Path to the ground truth CSV file"
     )
-    parser.add_argument("--fold", type=int, default=1, help="Fold to use for training")
+    parser.add_argument(
+        "--fold_1", type=int, default=1, help="Fold to use for training"
+    )
+    parser.add_argument(
+        "--fold_2", type=int, default=1, help="Fold to use for training"
+    )
     parser.add_argument(
         "--output_dir", required=True, help="Path to Output the results"
     )
@@ -422,12 +439,17 @@ def main(args):
     if args.data_dir2 and args.gt_dir2:
         print("Loading data from two directories")
         balanced_data, dir_mapping = load_balanced_data(
-            args.gt_dir, args.gt_dir2, args.data_dir, args.data_dir2
+            args.gt_dir,
+            args.gt_dir2,
+            args.data_dir,
+            args.data_dir2,
+            args.fold_1,
+            args.fold_2,
         )
         generator_class = DataGeneratorMultiple
         generator_args = (dir_mapping,)
     else:
-        balanced_data = load_ground_truth(args.gt_dir, args.data_dir, args.fold)
+        balanced_data = load_ground_truth(args.gt_dir, args.data_dir, args.fold_1)
         generator_class = DataGenerator
         generator_args = (args.data_dir,)
 
