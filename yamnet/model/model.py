@@ -32,6 +32,40 @@ np.random.seed(42)
 tf.random.set_seed(42)
 
 
+def load_sins_gt(gt_dir):
+    df = pd.read_csv(gt_dir)
+
+    df = df[~df["activity"].isin(["unknown", "dont use", "other"])]
+    df["tv"] = df["activity"].apply(lambda x: 1 if x == "watching tv" else 0)
+    df = df.rename(columns={"audio_file": "filename"})
+
+    tv_0 = df[df["tv"] == 0]
+    tv_1 = df[df["tv"] == 1]
+
+    working_absence_class = tv_0[
+        (tv_0["activity"] == "absence") | (tv_0["activity"] == "working")
+    ]
+    non_working_absence_class = tv_0[
+        (tv_0["activity"] != "absence") & (tv_0["activity"] != "working")
+    ]
+
+    downsampled_working_absence_class = working_absence_class.sample(
+        len(tv_1) - len(non_working_absence_class), random_state=42
+    )
+
+    tv_0_balanced = pd.concat(
+        [downsampled_working_absence_class, non_working_absence_class]
+    )
+
+    balanced_data = pd.concat([tv_0_balanced, tv_1])
+    balanced_data.set_index("filename", inplace=True)
+
+    print(f"Total data after excluding 'Unknown', 'Don't Use', 'Other': {len(df)}")
+    print(f"Total balanced data: {len(balanced_data)}")
+
+    return balanced_data
+
+
 def load_balanced_data(
     gt_dir_1, gt_dir_2, data_dir_1, data_dir_2, fold_1, fold_2, step_ratio=0.5
 ):
@@ -405,6 +439,7 @@ def initialize_args(parser):
         required=True,
         help="Model to use for training or deployment",
     )
+    parser.add_argument("--dataset", required=True, help="Dataset to use for training")
     parser.add_argument(
         "--data_dir",
         required=True,
@@ -436,7 +471,7 @@ def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Load data
-    if args.data_dir2 and args.gt_dir2:
+    if args.dataset == "DSE_Aging":
         print("Loading data from two directories")
         balanced_data, dir_mapping = load_balanced_data(
             args.gt_dir,
@@ -448,6 +483,10 @@ def main(args):
         )
         generator_class = DataGeneratorMultiple
         generator_args = (dir_mapping,)
+    elif args.dataset == "SINS":
+        balanced_data = load_sins_gt(args.gt_dir)
+        generator_class = DataGenerator
+        generator_args = (args.data_dir,)
     else:
         balanced_data = load_ground_truth(args.gt_dir, args.data_dir, args.fold_1)
         generator_class = DataGenerator
