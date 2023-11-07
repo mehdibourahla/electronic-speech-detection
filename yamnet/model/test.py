@@ -16,47 +16,33 @@ from model import lstm_model
 
 
 def bayesian_ensemble(predictions, y):
-    # Check if y is one-hot encoded or just class labels
-    if len(y.shape) == 2 and y.shape[1] > 1:  # y is one-hot encoded
+    if len(y.shape) == 2 and y.shape[1] > 1:
         true_labels = y.argmax(axis=1)
-    elif len(y.shape) == 1:  # y is assumed to be class labels
+    elif len(y.shape) == 1:
         true_labels = y
     else:
         raise ValueError(
             "y must be either a 1D array of class labels or a 2D one-hot encoded array."
         )
 
-    # Ensure true_labels is an array of integers for indexing
     true_labels = true_labels.astype(int)
 
-    # Number of models in the ensemble
     num_models = len(predictions)
 
-    # Assume each model has equal prior probability
     prior = 1.0 / num_models
-    priors = np.full(
-        num_models, prior
-    )  # This creates an array filled with the value of 'prior'
+    priors = np.full(num_models, prior)
 
-    # Compute the likelihoods of the data given the models
-    # Assuming that predictions is a list of numpy arrays with shape (num_samples, num_classes)
     likelihoods = np.array(
         [pred[np.arange(len(y)), true_labels.astype(int)] for pred in predictions]
     )
 
-    # Apply Bayes' theorem: posterior is proportional to prior * likelihood
-    posteriors = (
-        priors[:, np.newaxis] * likelihoods
-    )  # priors shape will be (num_models, 1) to match likelihoods (num_models, num_samples)
+    posteriors = priors[:, np.newaxis] * likelihoods
 
-    # Normalize to sum to 1 across the models for each sample
     posteriors = posteriors / posteriors.sum(axis=0, keepdims=True)
 
-    # Weight predictions by the posterior probabilities
     weighted_predictions = np.array(predictions) * posteriors[:, :, np.newaxis]
     bayesian_avg_predictions = np.sum(weighted_predictions, axis=0)
 
-    # For classification, convert to class labels
     final_predictions = np.argmax(bayesian_avg_predictions, axis=1)
 
     return final_predictions
