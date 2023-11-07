@@ -15,6 +15,72 @@ from sklearn.metrics import (
 from model import lstm_model
 
 
+def bayesian_ensemble(predictions, y):
+    # Check if y is one-hot encoded or just class labels
+    if len(y.shape) == 2 and y.shape[1] > 1:  # y is one-hot encoded
+        true_labels = y.argmax(axis=1)
+    elif len(y.shape) == 1:  # y is assumed to be class labels
+        true_labels = y
+    else:
+        raise ValueError(
+            "y must be either a 1D array of class labels or a 2D one-hot encoded array."
+        )
+
+    # Ensure true_labels is an array of integers for indexing
+    true_labels = true_labels.astype(int)
+
+    # Number of models in the ensemble
+    num_models = len(predictions)
+
+    # Assume each model has equal prior probability
+    prior = 1.0 / num_models
+    priors = np.full(
+        num_models, prior
+    )  # This creates an array filled with the value of 'prior'
+
+    # Compute the likelihoods of the data given the models
+    # Assuming that predictions is a list of numpy arrays with shape (num_samples, num_classes)
+    likelihoods = np.array(
+        [pred[np.arange(len(y)), true_labels.astype(int)] for pred in predictions]
+    )
+
+    # Apply Bayes' theorem: posterior is proportional to prior * likelihood
+    posteriors = (
+        priors[:, np.newaxis] * likelihoods
+    )  # priors shape will be (num_models, 1) to match likelihoods (num_models, num_samples)
+
+    # Normalize to sum to 1 across the models for each sample
+    posteriors = posteriors / posteriors.sum(axis=0, keepdims=True)
+
+    # Weight predictions by the posterior probabilities
+    weighted_predictions = np.array(predictions) * posteriors[:, :, np.newaxis]
+    bayesian_avg_predictions = np.sum(weighted_predictions, axis=0)
+
+    # For classification, convert to class labels
+    final_predictions = np.argmax(bayesian_avg_predictions, axis=1)
+
+    return final_predictions
+
+
+def ensemble_predictions(models, X, y):
+    predictions = [model.predict(X) for model in models]
+
+    # Bayesian ensemble
+    bayesian_predictions = bayesian_ensemble(predictions, y)
+
+    return bayesian_predictions
+
+
+def load_models(model_dir):
+    models = []
+    for item in os.listdir(model_dir):
+        model_path = os.path.join(model_dir, item)
+        model = lstm_model((31, 1024))
+        model.load_weights(model_path)
+        models.append(model)
+    return models
+
+
 def load_ground_truth(gt_dir, data_dir):
     # Get the ear data
     gt_filemame = os.path.basename(gt_dir)
@@ -144,6 +210,12 @@ def initialize_args(parser):
     )
 
     parser.add_argument(
+        "--ensemble",
+        action="store_true",
+        help="Whether to use ensemble predictions",
+    )
+
+    parser.add_argument(
         "--output_dir", required=True, help="Path to the output directory"
     )
 
@@ -166,7 +238,15 @@ def main(args):
 
     X, y = full_data_generator.load_all_data()
 
-    results = model_evaluation(X, y, args.model)
+    if args.ensemble:
+        models = load_models(args.model)
+        y_pred = ensemble_predictions(models, X, y[:, 1])
+        results = compute_metrics(y_pred, y[:, 1])
+        results = dict(
+            zip(["accuracy", "precision", "recall", "f1", "specificity"], results)
+        )
+    else:
+        results = model_evaluation(X, y, args.model)
 
     with open(f"{args.output_dir}/{model_name}.json", "w") as json_file:
         json.dump(results, json_file)
