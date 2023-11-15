@@ -5,13 +5,10 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 
 class DataGenerator(tf.keras.utils.Sequence):
-    def __init__(
-        self, data_dir, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True
-    ):
+    def __init__(self, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True):
         "Initialization"
         self.dim = dim
         self.batch_size = batch_size
-        self.data_dir = data_dir
         self.list_IDs = balanced_data.index.tolist()
         self.labels = balanced_data.tv.values
         self.shuffle = shuffle
@@ -53,7 +50,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         for ID in list_IDs_temp:
             # Load sample and append to list
             try:
-                sequence = np.load(f"{self.data_dir}/{ID}.npy", allow_pickle=True)
+                sequence = np.load(ID, allow_pickle=True)
                 X.append(sequence)
 
                 # Store class
@@ -66,48 +63,6 @@ class DataGenerator(tf.keras.utils.Sequence):
         )
         y = np.array(y)
         y = to_categorical(y)
-
-        return X, y
-
-    def load_all_data(self):
-        return self._data_generation(self.list_IDs)
-
-
-class DataGeneratorMultiple(DataGenerator):
-    def __init__(
-        self, data_dirs, balanced_data, batch_size=32, dim=(32, 32, 32), shuffle=True
-    ):
-        "Initialization"
-        self.data_dirs = data_dirs
-        super().__init__(data_dirs, balanced_data, batch_size, dim, shuffle)
-
-    def _data_generation(self, list_IDs_temp):
-        "Generates data containing batch_size samples"
-        X = []
-        y = []
-        failures = 0
-        # Generate data
-        for ID in list_IDs_temp:
-            # Load sample and append to list
-            try:
-                # Get the correct directory for the ID
-                dir_path = self.data_dirs[ID]
-                sequence = np.load(f"{dir_path}/{ID}.npy", allow_pickle=True)
-                X.append(sequence)
-
-                # Store class
-                y.append(self.labels[self.list_IDs.index(ID)])
-            except Exception as e:
-                failures += 1
-                print(e)
-                continue
-        X = pad_sequences(
-            X, maxlen=31, dtype="float32", padding="post", truncating="post"
-        )
-        y = np.array(y)
-        y = to_categorical(y)
-
-        print(f"Failures in this batch: {failures}")
 
         return X, y
 
