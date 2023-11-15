@@ -67,7 +67,7 @@ def load_models(model_dir):
     return models
 
 
-def load_ground_truth(gt_dir, data_dir):
+def load_ground_truth(gt_dir, data_dir, fold=1, step_ratio=0.5):
     # Get the ear data
     gt_filemame = os.path.basename(gt_dir)
     print("Ground truth filename:", gt_filemame)
@@ -98,9 +98,35 @@ def load_ground_truth(gt_dir, data_dir):
     agreed_data = agreed_data.drop_duplicates(subset="filename", keep="first")
     print("Shape of GT after processing:", agreed_data.shape)
 
-    agreed_data.set_index("filename", inplace=True)
+    # Split the data into two groups based on the value of "tv"
+    tv_0 = agreed_data[agreed_data["tv"] == 0]
+    tv_1 = agreed_data[agreed_data["tv"] == 1]
 
-    return agreed_data
+    # Find out which group is larger
+    larger_group = tv_0 if len(tv_0) > len(tv_1) else tv_1
+    smaller_group = tv_1 if larger_group is tv_0 else tv_0
+
+    # Calculate step size for the sliding window approach
+    step_size = int(len(smaller_group) * step_ratio)
+
+    # Calculate the number of possible folds based on the step size
+    num_folds = (len(larger_group) - len(smaller_group)) // step_size + 1
+
+    # If the fold parameter is greater than the number of folds, set it to the last fold
+    if fold > num_folds:
+        print(f"Fold {fold} does not exist, using fold {num_folds}")
+        fold = num_folds
+
+    # Create the desired fold using the fold parameter
+    start_idx = (fold - 1) * step_size
+    end_idx = start_idx + len(smaller_group)
+    selected_fold = larger_group.iloc[start_idx:end_idx]
+
+    # Concatenate the balanced data
+    balanced_data = pd.concat([selected_fold, smaller_group])
+    balanced_data.set_index("filename", inplace=True)
+
+    return balanced_data
 
 
 def load_sins_gt(gt_dir, data_dir):
@@ -182,6 +208,7 @@ def initialize_args(parser):
         required=True,
         help="Path to the ground truth file (.csv)",
     )
+    parser.add_argument("--fold", type=int, default=1, help="Fold to use for testing")
 
     parser.add_argument(
         "--model",
