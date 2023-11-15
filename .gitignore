@@ -6,3 +6,5 @@ config.json
 *.ipynb
 *.sh
 *.log
+*.txt
+*.csv
