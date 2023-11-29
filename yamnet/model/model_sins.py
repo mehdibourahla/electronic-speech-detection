@@ -71,11 +71,6 @@ def initialize_args(parser):
     )
 
     parser.add_argument(
-        "--data_sins",
-        required=True,
-        help="Path to the directory containing NPY files",
-    )
-    parser.add_argument(
         "--gt_sins", required=True, help="Path to the ground truth CSV file"
     )
 
@@ -84,17 +79,30 @@ def initialize_args(parser):
     )
 
 
+def load_set(directory_path, set):
+    file_path = f"{directory_path}/{set}.csv"
+    if os.path.exists(file_path):
+        # Load the CSV file into a DataFrame
+        df = pd.read_csv(file_path)
+    else:
+        print(f"File {file_path} does not exist")
+        exit(1)
+    return df
+
+
 def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
-    data = load_sins_gt(args.gt_sins, args.data_sins)
 
     # Split the data into train, validation and test
-    train, val, test = split_data(data)
+    train = load_set(args.gt_sins, "train")
+    val = load_set(args.gt_sins, "val")
+    test = load_set(args.gt_sins, "test")
+    
+    train.set_index("filename", inplace=True)
+    val.set_index("filename", inplace=True)
+    test.set_index("filename", inplace=True)
 
-    # Save the splits
-    train.to_csv(f"{args.output_dir}/train.csv", index=False)
-    val.to_csv(f"{args.output_dir}/val.csv", index=False)
-    test.to_csv(f"{args.output_dir}/test.csv", index=False)
+    
 
     training_generator = DataGenerator(train)
     validation_generator = DataGenerator(val)

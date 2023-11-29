@@ -45,16 +45,14 @@ def process_dataset(df, data_dir):
     return df
 
 
-def load_process_data(gt_dir_1, gt_dir_2, data_dir_1, data_dir_2):
+def load_process_data(gt_dir_1, data_dir_1):
     # Load data
     data_1 = pd.read_csv(gt_dir_1)
-    data_2 = pd.read_csv(gt_dir_2)
 
     # Process the dataset
     data_1 = process_dataset(data_1, data_dir_1)
-    data_2 = process_dataset(data_2, data_dir_2)
 
-    return data_1, data_2
+    return data_1
 
 
 def split_dataset(df, test_size=0.3, random_state=42):
@@ -87,7 +85,34 @@ def balance_classes(data, class_column, random_state=42):
     return balanced_data
 
 
-def merge_datasets(data_1, data_2, dir_1, dir_2):
+def add_full_path(data, dir):
+    data["filename"] = data["filename"].apply(lambda x: os.path.join(dir, x + ".npy"))
+    return data
+
+
+def load_csv_files(directory_path):
+    # Define the file names
+    file_names = ["train.csv", "val.csv", "test.csv"]
+
+    # Initialize an empty dictionary to store the dataframes
+    dataframes = {}
+
+    # Iterate through the file names and load each into a DataFrame
+    for file_name in file_names:
+        file_path = os.path.join(directory_path, file_name)
+        if os.path.exists(file_path):
+            # Load the CSV file into a DataFrame
+            df = pd.read_csv(file_path)
+
+            dataframes[file_name[:-4]] = df
+        else:
+            print(f"File {file_name} not found in directory.")
+
+    # Return the DataFrames
+    return dataframes.get("train"), dataframes.get("val"), dataframes.get("test")
+
+
+def merge_datasets(data_1, data_2):
     # Balance within each dataset
     data_1_balanced = balance_classes(data_1, "tv")
     data_2_balanced = balance_classes(data_2, "tv")
@@ -99,17 +124,6 @@ def merge_datasets(data_1, data_2, dir_1, dir_2):
 
     print("Data 1 final shape:", data_1_final.shape)
     print("Data 2 final shape:", data_2_final.shape)
-
-    # Add the full path to the filename
-    data_1_final["filename"] = data_1_final["filename"].apply(
-        lambda x: os.path.join(dir_1, x + ".npy")
-    )
-    data_2_final["filename"] = data_2_final["filename"].apply(
-        lambda x: os.path.join(dir_2, x + ".npy")
-    )
-
-    print("Data DSE final shape:", data_1_final.shape)
-    print("Data Aging final shape:", data_2_final.shape)
 
     print(
         "Number of unique participants in DSE:",
@@ -137,24 +151,12 @@ def merge_datasets(data_1, data_2, dir_1, dir_2):
 def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load data
-    data_dse, data_aging = load_process_data(
-        args.gt_dse, args.gt_aging, args.data_dse, args.data_aging
-    )
-    train_dse, val_dse, test_dse = split_dataset(data_dse)
-    train_aging, val_aging, test_aging = split_dataset(data_aging)
+    train_dse, val_dse, test_dse = load_csv_files(args.gt_dse)
+    train_aging, val_aging, test_aging = load_csv_files(args.gt_aging)
 
-    # Save the splits
-    train_dse.to_csv(f"{args.output_dir}/train_dse.csv", index=False)
-    val_dse.to_csv(f"{args.output_dir}/val_dse.csv", index=False)
-    test_dse.to_csv(f"{args.output_dir}/test_dse.csv", index=False)
-    train_aging.to_csv(f"{args.output_dir}/train_aging.csv", index=False)
-    val_aging.to_csv(f"{args.output_dir}/val_aging.csv", index=False)
-    test_aging.to_csv(f"{args.output_dir}/test_aging.csv", index=False)
-
-    train = merge_datasets(train_dse, train_aging, args.data_dse, args.data_aging)
-    val = merge_datasets(val_dse, val_aging, args.data_dse, args.data_aging)
-    test = merge_datasets(test_dse, test_aging, args.data_dse, args.data_aging)
+    train = merge_datasets(train_dse, train_aging)
+    val = merge_datasets(val_dse, val_aging)
+    test = merge_datasets(test_dse, test_aging)
 
     training_generator = DataGenerator(train)
     validation_generator = DataGenerator(val)
@@ -183,18 +185,9 @@ def initialize_args(parser):
     )
 
     parser.add_argument(
-        "--data_dse",
-        required=True,
-        help="Path to the directory containing NPY files",
-    )
-    parser.add_argument(
         "--gt_dse", required=True, help="Path to the ground truth CSV file"
     )
-    parser.add_argument(
-        "--data_aging",
-        default=None,
-        help="Path to the directory containing NPY files",
-    )
+
     parser.add_argument(
         "--gt_aging", default=None, help="Path to the ground truth CSV file"
     )
