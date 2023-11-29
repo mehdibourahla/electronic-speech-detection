@@ -30,35 +30,33 @@ def process_audio(path, output_dir, yamnet, params):
     logging.info(f"Processing audio: {path}")
     try:
         wav_data, sr = sf.read(path, dtype=np.int16)
+
+        assert wav_data.dtype == np.int16, "Bad sample type: %r" % wav_data.dtype
+        waveform = wav_data / 32768.0  # Convert to [-1.0, +1.0]
+        waveform = waveform.astype("float32")
+
+        # Convert to mono and the sample rate expected by YAMNet.
+        if len(waveform.shape) > 1:
+            waveform = np.mean(waveform, axis=1)
+        if sr != params.sample_rate:
+            waveform = resampy.resample(waveform, sr, params.sample_rate)
+
+        duration = 30  # Duration in seconds
+        pace = int(duration * params.sample_rate)
+
+        num_full_chunks = len(waveform) // pace
+
+        filename = path.split("/")[-1].split(".")[0]
+        for i in range(num_full_chunks):
+            start_time = i * pace
+            end_time = start_time + pace
+            chunk = wav_data[start_time:end_time]
+            embeddings = yamnet_embeddings(chunk, yamnet)
+            embeddings_file = f"{output_dir}/{filename}_{i+1}.wav.npy"
+            np.save(embeddings_file, embeddings)
+
     except Exception as e:
-        logging.error(f"Error loading audio file {path}: {e}")
-        return None
-
-    assert wav_data.dtype == np.int16, "Bad sample type: %r" % wav_data.dtype
-    waveform = wav_data / 32768.0  # Convert to [-1.0, +1.0]
-    waveform = waveform.astype("float32")
-
-    # Convert to mono and the sample rate expected by YAMNet.
-    if len(waveform.shape) > 1:
-        waveform = np.mean(waveform, axis=1)
-    if sr != params.sample_rate:
-        waveform = resampy.resample(waveform, sr, params.sample_rate)
-
-    duration = 30  # Duration in seconds
-    sample_count = int(
-        duration * sr
-    )  # Calculate the number of samples for the desired duration
-    waveform = waveform[:sample_count]  # Keep only the first 'sample_count' samples
-
-    filename = path.split("/")[-1]
-
-    embeddings = yamnet_embeddings(waveform, yamnet)
-    # Save YAMNet embeddings for the audio file
-    embeddings_file = f"{output_dir+'/'+filename}.npy"
-    try:
-        np.save(embeddings_file, embeddings)
-    except Exception as e:
-        logging.error(f"Error saving embeddings for {filename}: {e}")
+        print(f"Error Processing audio file {path}: {e}")
         return None
 
 
