@@ -48,20 +48,31 @@ def bayesian_ensemble(predictions, y):
     return final_predictions
 
 
-def ensemble_predictions(models, X, y):
-    predictions = [model.predict(X) for model in models]
+def ensemble_predictions(models, test_generator):
+    predictions = []
+    for model in models:
+        y_pred = []
+        y_test = []
+        for batch in test_generator:
+            x, y = batch
+            y_pred.extend(model.predict(x))
+            y_test.extend(y)
+        predictions.append(y_pred)
 
     # Bayesian ensemble
-    bayesian_predictions = bayesian_ensemble(predictions, y)
+    bayesian_predictions = bayesian_ensemble(predictions, y_test)
 
     return bayesian_predictions
 
 
-def load_models(model_dir):
+def load_models(model_dir, input_shape=(31, 1024)):
     models = []
-    for item in os.listdir(model_dir):
+    # Load all models in the directory with .h5 extension
+    models_files = [f for f in os.listdir(model_dir) if f.endswith(".h5")]
+    
+    for item in models_files:
         model_path = os.path.join(model_dir, item)
-        model = lstm_model((31, 1024))
+        model = lstm_model(input_shape)
         model.load_weights(model_path)
         models.append(model)
     return models
