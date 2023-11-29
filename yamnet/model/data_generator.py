@@ -62,7 +62,7 @@ class DataGenerator(tf.keras.utils.Sequence):
             X, maxlen=31, dtype="float32", padding="post", truncating="post"
         )
         y = np.array(y)
-        y = to_categorical(y)
+        y = to_categorical(y, num_classes=2)
 
         return X, y
 
