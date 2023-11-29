@@ -1,32 +1,18 @@
 import os
 import numpy as np
 import librosa
-import logging
 import argparse
-import numpy as np
 import scipy
 import soundfile as sf
-import librosa
 from scipy.stats import zscore
 import statistics
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 from pathlib import Path
-
-# Configure logging
-logging.basicConfig(
-    filename="features.log",
-    filemode="w",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import resampy
 
 
-def calculate_energy_metric(audio_path):
-    audio_data, sample_rate = sf.read(audio_path)
-
-    if len(audio_data.shape) > 1:
-        audio_data = np.mean(audio_data, axis=1)
-
+def calculate_energy_metric(audio_data, sample_rate):
     # Define necessary parameters
     window_size = 0.1  # in seconds
     fft_size = 4096
@@ -56,7 +42,7 @@ def calculate_energy_metric(audio_path):
 
     # Step 3: Integration and normalization
     for cropped_fft in fft_frames:
-        spectral_energy = np.sum(cropped_fft)
+        spectral_energy = np.sum(cropped_fft**2)
         normalized_energy_curve = cropped_fft / spectral_energy
 
         # Step 4: Energy balance metric computation
@@ -78,57 +64,58 @@ def calculate_energy_metric(audio_path):
     return final_energy_balance
 
 
-def process_audio(path, output_dir):
-    logging.info(f"Processing audio: {path}")
-    median_energy_balance = calculate_energy_metric(path)
-    filename = path.split("/")[-1]
+def process_audio(audio_dir, output_dir, duration=5, sample_rate=16000):
+    audio_dir = Path(audio_dir)
+    audio_files = list(audio_dir.glob("*.wav"))
 
-    metric_file = f"{output_dir+'/'+filename}.npy"
-    try:
-        np.save(metric_file, median_energy_balance)
-    except Exception as e:
-        logging.error(f"Error saving embeddings for {filename}: {e}")
-        return None
-
-
-def process_audio_wrapper(audio_dir, output_dir):
-    data_path = Path(audio_dir)
-    data = list(data_path.glob("*.wav"))
-    with ThreadPoolExecutor() as executor:
-        futures = {
-            executor.submit(process_audio, str(file), output_dir) for file in data
-        }
-        for future in as_completed(futures):
+    # Open a text file to store the results
+    with open(output_dir + "/ebm_results_v5.txt", "a") as results_file:
+        for audio_file in tqdm(audio_files):
             try:
-                result = future.result()
+                wav_data, sr = sf.read(audio_file, dtype=np.int16)
+                if len(wav_data.shape) > 1:
+                    wav_data = np.mean(wav_data, axis=1)
+
+                if sr != sample_rate:
+                    wav_data = resampy.resample(wav_data, sr, sample_rate)
+
+                pace = duration * sample_rate
+
+                num_full_chunks = (
+                    len(wav_data) // pace
+                )  # Compute the number of full chunks
+
+                for i in range(num_full_chunks):  # Loop only over full chunks
+                    start_time = i * pace
+                    end_time = start_time + pace
+                    chunk = wav_data[start_time:end_time]
+
+                    # Compute the energy balance metric for the chunk
+                    ebm = calculate_energy_metric(chunk, sample_rate)
+
+                    # Write the filename and the ebm value to the text file
+                    results_file.write(f"{audio_file.stem}_{i}: {ebm}\n")
+
             except Exception as e:
-                logging.error(f"Error occurred: {e}")
-
-
-def main(args):
-    logging.info("Starting the main function...")
-
-    audio_dir = args.audio_dir
-    output_dir = args.output_dir
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    process_audio_wrapper(audio_dir, output_dir)
-
-    logging.info("Finished processing.")
+                print(f"Error processing audio file {audio_file}: {e}")
+                continue
 
 
 def initialize_args(parser):
-    # Input paths
     parser.add_argument(
-        "--audio_dir",
+        "--data_dir",
         required=True,
-        help="Path to the directory containing audio files",
+        help="Path to the directory containing NPY files",
+    )
+    parser.add_argument(
+        "--output_dir", required=True, help="Path to Output the results"
     )
 
-    parser.add_argument(
-        "--output_dir", required=True, help="Path to the output NPY files"
-    )
+
+def main(args):
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    process_audio(args.data_dir, args.output_dir)
 
 
 if __name__ == "__main__":
