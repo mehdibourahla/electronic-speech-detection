@@ -20,33 +20,13 @@ def load_test_set(directory_path):
     return df
 
 
-def bayesian_ensemble(models, X):
-    num_models = len(models)
-    num_classes = 2
-
-    # Initialize ensemble predictions
-    ensemble_predictions = np.zeros((X.shape[0], num_classes))
-
-    for model in models:
-        y_pred = model.predict(X)
-
-        # Use the highest class probability as a confidence measure
-        confidence = np.max(y_pred, axis=1)
-
-        # Weight predictions by confidence
-        weighted_predictions = y_pred * confidence[:, np.newaxis]
-
-        # Add to ensemble predictions
-        ensemble_predictions += weighted_predictions
-
-    # Normalize the ensemble predictions
-    ensemble_predictions /= num_models
-
-    # Convert predictions from one-hot to labels
-
-    ensemble_predictions = np.argmax(ensemble_predictions, axis=1)
-
-    return ensemble_predictions
+def ensemble(models, X, threshold=0.5):
+    final_predictions = np.zeros(len(X))
+    for clf in models:
+        predictions = clf.predict(X)[:, 1]
+        weights = np.where(predictions > threshold, predictions, 0)
+        final_predictions += weights
+    return np.round(final_predictions / len(models))
 
 
 def initialize_args(parser):
@@ -90,7 +70,7 @@ def main(args):
     input_shape = X.shape[1:]
     models = load_models(args.ensemble_dir, input_shape)
     # Compute Bayesian ensemble predictions
-    y_pred = bayesian_ensemble(models, X)
+    y_pred = ensemble(models, X)
 
     # Evaluate model
     results = dict(
